@@ -1,0 +1,53 @@
+# === Entorno ===
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# === Env / secretos ===
+.env
+.env.*
+!.env.example
+
+# === Storage (datos de usuario, nunca commitear) ===
+storage/app.db
+storage/app.db-journal
+storage/app.db-wal
+storage/app.db-shm
+storage/uploads/
+storage/processed/
+storage/exports/
+!storage/.gitkeep
+
+# === Logs ===
+*.log
+logs/
+
+# === Tests / coverage ===
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# === IDE ===
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# === Build / distribucion ===
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# === Docker ===
+docker-compose.override.yml
+
+# === SO ===
+.DS_Store
+Thumbs.db

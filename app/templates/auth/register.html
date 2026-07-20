@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Registrarse — PDF Extractor{% endblock %}
+
+{% block content %}
+<section class="max-w-md mx-auto px-6 py-16">
+  <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-8">
+    <h1 class="text-2xl font-semibold text-slate-900 mb-1">Crear cuenta</h1>
+    <p class="text-sm text-slate-500 mb-6">El primer usuario creado será administrador.</p>
+
+    {% if error %}
+    <div class="mb-4 px-3 py-2 rounded-md bg-red-50 border border-red-200 text-red-700 text-sm">
+      {{ error }}
+    </div>
+    {% endif %}
+
+    <form method="post" action="/auth/register" class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">Nombre de usuario</label>
+        <input name="username" type="text" required minlength="3" maxlength="64"
+               class="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-brand-500 focus:ring-brand-500 outline-none">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">Email</label>
+        <input name="email" type="email" required
+               class="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-brand-500 focus:ring-brand-500 outline-none">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">Nombre completo (opcional)</label>
+        <input name="full_name" type="text"
+               class="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-brand-500 focus:ring-brand-500 outline-none">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">Contraseña (mín. 8 caracteres)</label>
+        <input name="password" type="password" required minlength="8"
+               class="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-brand-500 focus:ring-brand-500 outline-none">
+      </div>
+      <button type="submit"
+              class="w-full py-2.5 rounded-md bg-brand-600 text-white font-medium hover:bg-brand-700">
+        Registrarme
+      </button>
+    </form>
+
+    <p class="text-center text-sm text-slate-500 mt-6">
+      ¿Ya tenés cuenta?
+      <a href="/auth/login" class="text-brand-600 hover:underline">Entrar</a>
+    </p>
+  </div>
+</section>
+{% endblock %}

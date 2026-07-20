@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}PDF Extractor{% endblock %}</title>
+
+  {# Tailwind (CDN para empezar; en prod compilar local) #}
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#eff6ff', 100: '#dbeafe', 200: '#bfdbfe', 300: '#93c5fd',
+              400: '#60a5fa', 500: '#3b82f6', 600: '#2563eb', 700: '#1d4ed8',
+              800: '#1e40af', 900: '#1e3a8a'
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  {# HTMX #}
+  <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
+
+  <link rel="stylesheet" href="/static/css/app.css">
+  {% block extra_head %}{% endblock %}
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col">
+
+  {% block navbar %}
+  <nav class="bg-white border-b border-slate-200">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex h-14 items-center justify-between">
+      <a href="/" class="flex items-center gap-2 font-semibold text-brand-700">
+        <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+          <path d="M14 2v6h6M9 13h6M9 17h6"/>
+        </svg>
+        PDF Extractor
+      </a>
+
+      {% if user %}
+      <div class="flex items-center gap-4 text-sm">
+        <a href="/app" class="text-slate-600 hover:text-brand-700">Panel</a>
+        <a href="/app/documents" class="text-slate-600 hover:text-brand-700">Documentos</a>
+        <a href="/app/history" class="text-slate-600 hover:text-brand-700">Historial</a>
+        <a href="/app/settings" class="text-slate-600 hover:text-brand-700 flex items-center gap-1" title="Configuración">
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+          Ajustes
+        </a>
+        <span class="text-slate-400">·</span>
+        <span class="text-slate-600">{{ user.username }}
+          {% if user.role.value == 'admin' %}
+          <span class="ml-1 px-1.5 py-0.5 rounded bg-brand-100 text-brand-700 text-xs">admin</span>
+          {% endif %}
+          {% if user.plan == 'pro' %}
+          <a href="/app/pricing" class="ml-1 px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 text-xs font-medium hover:bg-amber-200">Pro</a>
+          {% else %}
+          <a href="/app/pricing" class="ml-1 px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 text-xs font-medium hover:bg-slate-200" title="Ver planes">Free ({{ user.pdf_count_month }}/3)</a>
+          {% endif %}
+        </span>
+        <form method="post" action="/auth/logout" class="inline">
+          <button class="text-slate-500 hover:text-red-600">Salir</button>
+        </form>
+      </div>
+      {% else %}
+      <div class="flex items-center gap-3 text-sm">
+        <a href="/auth/login" class="text-slate-600 hover:text-brand-700">Entrar</a>
+        <a href="/auth/register" class="px-3 py-1.5 rounded-md bg-brand-600 text-white hover:bg-brand-700">Registrarse</a>
+      </div>
+      {% endif %}
+    </div>
+  </nav>
+  {% endblock %}
+
+  <main class="flex-1">
+    {% block content %}{% endblock %}
+  </main>
+
+  {% block flash %}{% endblock %}
+
+  <footer class="text-center text-xs text-slate-400 py-4">
+    PDF Extractor · v0.1 · extracción inteligente de documentos
+  </footer>
+
+  <script src="/static/js/app.js" defer></script>
+  {% block extra_scripts %}{% endblock %}
+</body>
+</html>

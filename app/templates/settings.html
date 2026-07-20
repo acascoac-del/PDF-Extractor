@@ -1,0 +1,296 @@
+{% extends "base.html" %}
+
+{% block title %}Configuración — PDF Extractor{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+  <div class="flex flex-col md:flex-row gap-8">
+
+    {# ---- Sidebar ---- #}
+    <aside class="w-full md:w-56 shrink-0">
+      <nav class="space-y-1">
+        <a href="/app/settings"
+           class="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium
+                  bg-brand-50 text-brand-700 border border-brand-200">
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+          Proveedor IA
+        </a>
+      </nav>
+    </aside>
+
+    {# ---- Contenido principal ---- #}
+    <div class="flex-1 max-w-2xl">
+
+      <h1 class="text-2xl font-bold text-slate-800 mb-6">Configuración</h1>
+
+      {# Mensaje de éxito #}
+      {% if success %}
+      <div class="mb-6 p-4 rounded-lg bg-green-50 border border-green-200 text-green-800 text-sm flex items-center gap-2">
+        <svg class="w-5 h-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+          <polyline points="22 4 12 14.01 9 11.01"/>
+        </svg>
+        {{ success }}
+      </div>
+      {% endif %}
+
+      {# ---- Formulario LLM ---- #}
+      <form method="post" action="/app/settings/llm" class="space-y-6 bg-white rounded-xl border border-slate-200 p-6 shadow-sm">
+
+        <h2 class="text-lg font-semibold text-slate-700 flex items-center gap-2">
+          <svg class="w-5 h-5 text-brand-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 0 1 7 7h1a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-1v1a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-1H2a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1h1a7 7 0 0 1 7-7h1V5.73c-.6-.34-1-.99-1-1.73a2 2 0 0 1 2-2"/>
+          </svg>
+          Proveedor de Inteligencia Artificial
+        </h2>
+
+        {# Proveedor #}
+        <div>
+          <label for="provider" class="block text-sm font-medium text-slate-700 mb-1">Proveedor</label>
+          <select id="provider" name="provider"
+                  class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm
+                         focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 focus:outline-none
+                         transition-colors">
+            {% for key, label in providers.items() %}
+            <option value="{{ key }}" {% if llm.get('provider') == key %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        {# API Key #}
+        <div>
+          <label for="api_key" class="block text-sm font-medium text-slate-700 mb-1">API Key</label>
+          <div class="relative">
+            <input type="password" id="api_key" name="api_key"
+                   value="{{ llm.get('api_key', '') }}"
+                   placeholder="sk-..."
+                   class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 pr-10 text-sm
+                          focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 focus:outline-none
+                          transition-colors font-mono">
+            <button type="button" id="toggleApiKey"
+                    class="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600
+                           transition-colors"
+                    title="Mostrar/ocultar API key">
+              <svg id="eyeIcon" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                <circle cx="12" cy="12" r="3"/>
+              </svg>
+              <svg id="eyeOffIcon" class="w-5 h-5 hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
+                <line x1="1" y1="1" x2="23" y2="23"/>
+              </svg>
+            </button>
+          </div>
+          <p class="mt-1 text-xs text-slate-400">Tu clave se guarda localmente y se usa solo para las llamadas al proveedor.</p>
+        </div>
+
+        {# URL Base #}
+        <div>
+          <label for="base_url" class="block text-sm font-medium text-slate-700 mb-1">URL Base</label>
+          <input type="text" id="base_url" name="base_url"
+                 value="{{ llm.get('base_url', '') }}"
+                 placeholder="https://api.openai.com/v1"
+                 class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm
+                        focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 focus:outline-none
+                        transition-colors font-mono">
+          <p class="mt-1 text-xs text-slate-400">Se completa automáticamente al cambiar el proveedor.</p>
+        </div>
+
+        {# Modelo + Buscar modelos #}
+        <div>
+          <label for="model" class="block text-sm font-medium text-slate-700 mb-1">Modelo</label>
+          <div class="flex gap-2">
+            <select id="model" name="model"
+                    class="flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm
+                           focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 focus:outline-none
+                           transition-colors">
+              {% if llm.get('model') %}
+              <option value="{{ llm.get('model') }}" selected>{{ llm.get('model') }}</option>
+              {% else %}
+              <option value="" disabled selected>Seleccioná un modelo...</option>
+              {% endif %}
+            </select>
+            <button type="button" id="fetchModelsBtn"
+                    class="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium
+                           bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-300
+                           transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+              <svg id="fetchSpinner" class="w-4 h-4 animate-spin hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+              </svg>
+              <svg id="fetchIcon" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="7 10 12 15 17 10"/>
+                <line x1="12" y1="15" x2="12" y2="3"/>
+              </svg>
+              Buscar modelos
+            </button>
+          </div>
+          <div id="fetchError" class="mt-2 hidden p-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm"></div>
+        </div>
+
+        {# Temperatura #}
+        <div>
+          <label for="temperature" class="block text-sm font-medium text-slate-700 mb-1">
+            Temperatura
+            <span id="tempValue" class="ml-2 text-brand-600 font-semibold">{{ "%.1f"|format(llm.get('temperature', 0.0)) }}</span>
+          </label>
+          <input type="range" id="temperature" name="temperature"
+                 min="0.0" max="1.0" step="0.1"
+                 value="{{ llm.get('temperature', 0.0) }}"
+                 class="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer
+                        accent-brand-600">
+          <div class="flex justify-between text-xs text-slate-400 mt-1">
+            <span>0.0 (preciso)</span>
+            <span>1.0 (creativo)</span>
+          </div>
+        </div>
+
+        {# Botón guardar #}
+        <div class="pt-2">
+          <button type="submit"
+                  class="inline-flex items-center gap-2 px-6 py-2.5 rounded-lg text-sm font-medium
+                         bg-brand-600 text-white hover:bg-brand-700
+                         transition-colors shadow-sm">
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+              <polyline points="17 21 17 13 7 13 7 21"/>
+              <polyline points="7 3 7 8 15 8"/>
+            </svg>
+            Guardar
+          </button>
+        </div>
+      </form>
+
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  // --- Provider URLs map ---
+  const PROVIDER_URLS = {
+    "openai": "https://api.openai.com/v1",
+    "openrouter": "https://openrouter.ai/api/v1",
+    "groq": "https://api.groq.com/openai/v1",
+    "ollama": "http://localhost:11434/v1",
+    "custom": ""
+  };
+
+  const providerSelect = document.getElementById('provider');
+  const baseUrlInput = document.getElementById('base_url');
+  const apiKeyInput = document.getElementById('api_key');
+  const modelSelect = document.getElementById('model');
+  const fetchBtn = document.getElementById('fetchModelsBtn');
+  const fetchSpinner = document.getElementById('fetchSpinner');
+  const fetchIcon = document.getElementById('fetchIcon');
+  const fetchError = document.getElementById('fetchError');
+  const toggleApiKeyBtn = document.getElementById('toggleApiKey');
+  const eyeIcon = document.getElementById('eyeIcon');
+  const eyeOffIcon = document.getElementById('eyeOffIcon');
+  const tempSlider = document.getElementById('temperature');
+  const tempValue = document.getElementById('tempValue');
+
+  // --- Auto-fill base_url when provider changes ---
+  providerSelect.addEventListener('change', function() {
+    const url = PROVIDER_URLS[this.value];
+    if (url !== undefined) {
+      baseUrlInput.value = url;
+    }
+    // Clear models on provider change
+    modelSelect.innerHTML = '<option value="" disabled selected>Seleccioná un modelo...</option>';
+    fetchError.classList.add('hidden');
+  });
+
+  // --- Show/hide API key ---
+  toggleApiKeyBtn.addEventListener('click', function() {
+    const isPassword = apiKeyInput.type === 'password';
+    apiKeyInput.type = isPassword ? 'text' : 'password';
+    eyeIcon.classList.toggle('hidden', !isPassword);
+    eyeOffIcon.classList.toggle('hidden', isPassword);
+  });
+
+  // --- Temperature slider value ---
+  tempSlider.addEventListener('input', function() {
+    tempValue.textContent = parseFloat(this.value).toFixed(1);
+  });
+
+  // --- Fetch models ---
+  fetchBtn.addEventListener('click', async function() {
+    const provider = providerSelect.value;
+    const apiKey = apiKeyInput.value.trim();
+    const baseUrl = baseUrlInput.value.trim();
+
+    // Validación mínima
+    if (!provider) {
+      showFetchError('Seleccioná un proveedor primero.');
+      return;
+    }
+
+    if (provider !== 'ollama' && !apiKey) {
+      showFetchError('Ingresá tu API Key para buscar modelos.');
+      return;
+    }
+
+    // Mostrar loading
+    fetchBtn.disabled = true;
+    fetchSpinner.classList.remove('hidden');
+    fetchIcon.classList.add('hidden');
+    fetchError.classList.add('hidden');
+
+    try {
+      const params = new URLSearchParams({
+        provider: provider,
+        api_key: apiKey,
+        base_url: baseUrl
+      });
+
+      const resp = await fetch(`/app/settings/fetch-models?${params.toString()}`);
+      const data = await resp.json();
+
+      if (!resp.ok) {
+        showFetchError(data.error || 'Error al buscar modelos.');
+        return;
+      }
+
+      const models = data.models || [];
+      if (models.length === 0) {
+        showFetchError('No se encontraron modelos para este proveedor.');
+        return;
+      }
+
+      // Guardar valor actual seleccionado
+      const currentValue = modelSelect.value;
+
+      // Poblar el dropdown
+      modelSelect.innerHTML = '';
+      models.forEach(function(m) {
+        const opt = document.createElement('option');
+        opt.value = m.id;
+        opt.textContent = m.name || m.id;
+        modelSelect.appendChild(opt);
+      });
+
+      // Restaurar selección anterior si existe
+      if (currentValue && modelSelect.querySelector(`option[value="${currentValue}"]`)) {
+        modelSelect.value = currentValue;
+      }
+
+    } catch (err) {
+      showFetchError('Error de red. Verificá tu conexión.');
+    } finally {
+      fetchBtn.disabled = false;
+      fetchSpinner.classList.add('hidden');
+      fetchIcon.classList.remove('hidden');
+    }
+  });
+
+  function showFetchError(msg) {
+    fetchError.textContent = msg;
+    fetchError.classList.remove('hidden');
+  }
+})();
+</script>
+{% endblock %}

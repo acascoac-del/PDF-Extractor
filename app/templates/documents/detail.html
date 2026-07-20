@@ -1,0 +1,281 @@
+{% extends "base.html" %}
+{% block title %}{{ doc.original_filename }} — PDF Extractor{% endblock %}
+
+{% block content %}
+<section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+  {# Breadcrumb #}
+  <div class="text-sm text-slate-500 mb-4">
+    <a href="/app/documents/list" class="hover:text-brand-600">Documentos</a>
+    <span class="mx-1">/</span>
+    <span class="text-slate-700">{{ doc.original_filename }}</span>
+  </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+    {# === Columna izquierda: Preview del PDF === #}
+    <div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
+      <div class="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
+        <h2 class="font-semibold text-slate-900">Vista previa</h2>
+        <span class="text-xs text-slate-400">{{ doc.page_count or '?' }} página(s)
+          {% if doc.is_scanned %}· OCR{% endif %}
+        </span>
+      </div>
+      <div class="bg-slate-100 p-2 min-h-[400px] flex items-center justify-center">
+        <iframe
+          src="/app/documents/{{ doc.id }}/preview"
+          class="w-full h-[500px] rounded border border-slate-300 bg-white"
+          title="Preview PDF">
+        </iframe>
+      </div>
+    </div>
+
+    {# === Columna derecha: Clasificación + Extracción + Exportación === #}
+    <div class="space-y-4">
+
+      {# Status + clasificación #}
+      <div class="bg-white rounded-xl border border-slate-200 p-4">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="font-semibold text-slate-900">Información</h2>
+          {{ status_badge(doc.status) | safe }}
+        </div>
+        <div class="grid grid-cols-2 gap-3 text-sm">
+          <div>
+            <div class="text-slate-500">Tipo detectado</div>
+            <div class="font-medium text-slate-800">{{ doc_type_label(doc.doc_type) }}</div>
+          </div>
+          <div>
+            <div class="text-slate-500">Confianza</div>
+            <div class="font-medium text-slate-800">{{ '%0.0f' | format((doc.doc_type_confidence or 0) * 100) }}%</div>
+          </div>
+          <div>
+            <div class="text-slate-500">Tamaño</div>
+            <div class="font-medium text-slate-800">{{ (doc.size_bytes / 1024)|round(1) }} KB</div>
+          </div>
+          <div>
+            <div class="text-slate-500">Subido</div>
+            <div class="font-medium text-slate-800">{{ doc.created_at.strftime('%d/%m/%Y %H:%M') }}</div>
+          </div>
+        </div>
+
+        {% if doc.status.value in ('uploaded', 'classified') %}
+        <form method="post" action="/app/documents/classify/{{ doc.id }}" class="mt-4 pt-4 border-t border-slate-100">
+          <label class="block text-sm font-medium text-slate-700 mb-1">Confirmar / corregir tipo:</label>
+          <div class="flex gap-2">
+            <select name="doc_type" class="flex-1 px-3 py-1.5 rounded-md border border-slate-300 text-sm">
+              <option value="invoice" {% if doc.doc_type and doc.doc_type.value == 'invoice' %}selected{% endif %}>Factura</option>
+              <option value="receipt" {% if doc.doc_type and doc.doc_type.value == 'receipt' %}selected{% endif %}>Remito</option>
+              <option value="quote" {% if doc.doc_type and doc.doc_type.value == 'quote' %}selected{% endif %}>Presupuesto</option>
+              <option value="contract" {% if doc.doc_type and doc.doc_type.value == 'contract' %}selected{% endif %}>Contrato</option>
+              <option value="report" {% if doc.doc_type and doc.doc_type.value == 'report' %}selected{% endif %}>Informe</option>
+              <option value="table" {% if doc.doc_type and doc.doc_type.value == 'table' %}selected{% endif %}>Tabla</option>
+              <option value="generic" {% if doc.doc_type and doc.doc_type.value == 'generic' %}selected{% endif %}>Genérico</option>
+            </select>
+            <button type="submit"
+                    class="px-4 py-1.5 rounded-md bg-brand-600 text-white text-sm font-medium hover:bg-brand-700">
+              Procesar
+            </button>
+          </div>
+          {# Model selector / AI config hint #}
+          {% set llm_cfg = user.settings.get('llm', {}) if user.settings else {} %}
+          {% if llm_cfg.get('api_key') and llm_cfg.get('base_url') %}
+          <div class="mt-2 flex items-center gap-2 text-xs text-slate-500">
+            <span class="inline-block w-2 h-2 rounded-full bg-green-400"></span>
+            <span>IA configurada: <strong>{{ llm_cfg.get('model', 'predeterminado') }}</strong></span>
+          </div>
+          {% else %}
+          <div class="mt-2 text-xs text-slate-400">
+            Sin IA configurada. <a href="/app/settings" class="text-brand-600 hover:underline">Configurar proveedor LLM</a>
+          </div>
+          {% endif %}
+        </form>
+        {% endif %}
+
+        {% if doc.error_message %}
+        <div class="mt-3 px-3 py-2 rounded-md bg-red-50 border border-red-200 text-red-700 text-sm">
+          ⚠ {{ doc.error_message }}
+        </div>
+        {% endif %}
+      </div>
+
+      {# Extracción: campos con confianza #}
+      {% if extraction %}
+      <div class="bg-white rounded-xl border border-slate-200 p-4">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="font-semibold text-slate-900">Datos extraídos</h2>
+          <div class="flex items-center gap-2">
+            {% if extraction.llm_model %}
+            <span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-700">
+              Extracción asistida por IA: {{ extraction.llm_model }}
+            </span>
+            {% endif %}
+            <span class="text-xs text-slate-400">Confianza global: {{ '%0.0f' | format(extraction.overall_confidence * 100) }}%</span>
+          </div>
+        </div>
+
+        <div class="space-y-2" id="fields-container">
+          {% for key, field in extraction.data.get('fields', {}).items() %}
+          <div class="flex items-start gap-3 py-2 border-b border-slate-50"
+               id="field-{{ key }}">
+            <div class="w-32 shrink-0">
+              <span class="text-xs font-medium text-slate-500 uppercase">{{ key }}</span>
+            </div>
+            <div class="flex-1">
+              <input type="text"
+                     name="{{ key }}"
+                     value="{{ field.value if field.value is not none else '' }}"
+                     data-raw="{{ field.raw if field.raw is not none else '' }}"
+                     class="field-edit w-full px-2 py-1 rounded border border-transparent hover:border-slate-300 text-sm text-slate-800"
+                     hx-post="/app/documents/{{ doc.id }}/correct"
+                     hx-trigger="change"
+                     hx-include="this"
+                     hx-target="#field-{{ key }} .badge">
+            </div>
+            <div class="badge">
+              <span class="inline-block px-1.5 py-0.5 rounded text-xs font-medium
+                {% if field.confidence >= 0.8 %}conf-high
+                {% elif field.confidence >= 0.5 %}conf-medium
+                {% else %}conf-low{% endif %}">
+                {% if field.source == 'llm' %}IA{% else %}Reglas{% endif %} · {{ '%0.0f' | format(field.confidence * 100) }}%
+              </span>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+
+        {# Items / tabla #}
+        {% if extraction.data.get('items') %}
+        <div class="mt-4 pt-4 border-t border-slate-100">
+          <h3 class="text-sm font-semibold text-slate-700 mb-2">Ítems ({{ extraction.data.get('items', []) | length }})</h3>
+          <div class="overflow-x-auto">
+            <table class="w-full text-xs border border-slate-200 rounded">
+              <thead class="bg-slate-50">
+                <tr>
+                  <th class="px-2 py-1 text-left text-slate-600">Código</th>
+                  <th class="px-2 py-1 text-left text-slate-600">Descripción</th>
+                  <th class="px-2 py-1 text-right text-slate-600">Cant.</th>
+                  <th class="px-2 py-1 text-right text-slate-600">UM</th>
+                  <th class="px-2 py-1 text-right text-slate-600">Riesgo ONU</th>
+                  <th class="px-2 py-1 text-right text-slate-600">V. Unitario</th>
+                  <th class="px-2 py-1 text-right text-slate-600">Importe</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-100">
+                {% for item in extraction.data.get('items', []) %}
+                <tr>
+                  <td class="px-2 py-1 text-slate-500 text-xs">{{ item.get('code', '') }}</td>
+                  <td class="px-2 py-1 text-slate-700">{{ item.get('description', '') }}</td>
+                  <td class="px-2 py-1 text-right text-slate-600">{{ item.get('quantity', item.get('cantidad', '')) }}</td>
+                  <td class="px-2 py-1 text-right text-slate-600">{{ item.get('unit', item.get('um', '')) }}</td>
+                  <td class="px-2 py-1 text-right text-slate-600">{{ item.get('risk_un', '') }}</td>
+                  <td class="px-2 py-1 text-right text-slate-600">{{ item.get('unit_price', item.get('precio_unitario', '')) }}</td>
+                  <td class="px-2 py-1 text-right font-medium text-slate-800">{{ item.get('import', item.get('importe', item.get('subtotal', ''))) }}</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        {% endif %}
+
+        {# IBP entries #}
+        {% if extraction.data.get('ibp_entries') %}
+        <div class="mt-4 pt-4 border-t border-slate-100">
+          <h3 class="text-sm font-semibold text-slate-700 mb-2">IBP (Ingresos Brutos Provincial)</h3>
+          <div class="overflow-x-auto">
+            <table class="w-full text-xs border border-slate-200 rounded">
+              <thead class="bg-slate-50">
+                <tr>
+                  <th class="px-2 py-1 text-left text-slate-600">Jurisdicción</th>
+                  <th class="px-2 py-1 text-right text-slate-600">Porcentaje</th>
+                  <th class="px-2 py-1 text-right text-slate-600">Monto</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-100">
+                {% for entry in extraction.data.get('ibp_entries', []) %}
+                <tr>
+                  <td class="px-2 py-1 text-slate-700">{{ entry.get('jurisdiction', '') }}</td>
+                  <td class="px-2 py-1 text-right text-slate-600">{{ entry.get('percentage', '') }}%</td>
+                  <td class="px-2 py-1 text-right font-medium text-slate-800">{{ entry.get('amount', '') }}</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        {% endif %}
+
+        {# Tasa Vial entries #}
+        {% if extraction.data.get('tasa_vial_entries') %}
+        <div class="mt-4 pt-4 border-t border-slate-100">
+          <h3 class="text-sm font-semibold text-slate-700 mb-2">Tasa Vial ({{ extraction.data.get('tasa_vial_entries', []) | length }} localidades)</h3>
+          <div class="overflow-x-auto max-h-48 overflow-y-auto">
+            <table class="w-full text-xs border border-slate-200 rounded">
+              <thead class="bg-slate-50 sticky top-0">
+                <tr>
+                  <th class="px-2 py-1 text-left text-slate-600">Localidad</th>
+                  <th class="px-2 py-1 text-right text-slate-600">Monto</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-100">
+                {% for entry in extraction.data.get('tasa_vial_entries', []) %}
+                <tr>
+                  <td class="px-2 py-1 text-slate-700">{{ entry.get('locality', '') }}</td>
+                  <td class="px-2 py-1 text-right font-medium text-slate-800">{{ entry.get('amount', '') }}</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        {% endif %}
+
+        {# Risk/ONU descriptions #}
+        {% if extraction.data.get('risk_descriptions') %}
+        <div class="mt-4 pt-4 border-t border-slate-100">
+          <h3 class="text-sm font-semibold text-slate-700 mb-2">Riesgo/ONU</h3>
+          <div class="space-y-1">
+            {% for risk in extraction.data.get('risk_descriptions', []) %}
+            <div class="flex gap-2 text-xs py-1">
+              <span class="inline-block px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 font-mono font-medium">{{ risk.get('number', '') }}</span>
+              <span class="text-slate-600">{{ risk.get('description', '') }}</span>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+        {% endif %}
+      </div>
+      {% endif %}
+
+      {# Exportación #}
+      {% if extraction %}
+      <div class="bg-white rounded-xl border border-slate-200 p-4">
+        <h2 class="font-semibold text-slate-900 mb-3">Exportar</h2>
+        <div class="flex flex-wrap gap-2">
+          <a href="/app/documents/{{ doc.id }}/export/xlsx"
+             class="px-3 py-1.5 rounded-md bg-green-600 text-white text-sm font-medium hover:bg-green-700">
+            📊 Excel
+          </a>
+          <a href="/app/documents/{{ doc.id }}/export/docx"
+             class="px-3 py-1.5 rounded-md bg-blue-600 text-white text-sm font-medium hover:bg-blue-700">
+            📄 Word
+          </a>
+          <a href="/app/documents/{{ doc.id }}/export/csv"
+             class="px-3 py-1.5 rounded-md border border-slate-300 text-sm text-slate-700 hover:bg-slate-50">
+            CSV
+          </a>
+          <a href="/app/documents/{{ doc.id }}/export/json"
+             class="px-3 py-1.5 rounded-md border border-slate-300 text-sm text-slate-700 hover:bg-slate-50">
+            JSON
+          </a>
+          <a href="/app/documents/{{ doc.id }}/export/zip"
+             class="px-3 py-1.5 rounded-md border border-slate-300 text-sm text-slate-700 hover:bg-slate-50">
+            📦 ZIP (todos)
+          </a>
+        </div>
+      </div>
+      {% endif %}
+
+    </div>{# fin columna derecha #}
+  </div>{# fin grid #}
+</section>
+{% endblock %}

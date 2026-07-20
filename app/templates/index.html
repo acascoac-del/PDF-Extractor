@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}PDF Extractor — Inicio{% endblock %}
+
+{% block content %}
+<section class="max-w-5xl mx-auto px-6 py-16 text-center">
+  <span class="inline-block px-3 py-1 rounded-full bg-brand-100 text-brand-700 text-xs font-medium mb-6">
+    Extracción inteligente · Motor híbrido reglas + IA
+  </span>
+  <h1 class="text-4xl sm:text-5xl font-bold tracking-tight text-slate-900 mb-4">
+    Convertí PDFs en Excel y Word<br>
+    con datos <span class="text-brand-600">limpios y estructurados</span>
+  </h1>
+  <p class="text-lg text-slate-600 max-w-2xl mx-auto mb-8">
+    Subí facturas, remitos, presupuestos o contratos y obtené tablas y textos
+    listos para usar — no volcados de texto crudo.
+    Reconocimiento de CUIT/CUIL, CAE, ítems, totales y mucho más.
+  </p>
+  <div class="flex items-center justify-center gap-3">
+    <a href="/auth/register" class="px-5 py-2.5 rounded-lg bg-brand-600 text-white hover:bg-brand-700 font-medium">
+      Crear cuenta
+    </a>
+    <a href="/auth/login" class="px-5 py-2.5 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 font-medium">
+      Entrar
+    </a>
+  </div>
+
+  <div class="mt-16 grid grid-cols-1 sm:grid-cols-3 gap-6 text-left">
+    <div class="bg-white rounded-xl border border-slate-200 p-5">
+      <div class="text-brand-600 text-2xl mb-2">🧾</div>
+      <h3 class="font-semibold mb-1">Facturas AFIP</h3>
+      <p class="text-sm text-slate-600">Tipo A/B/C, CAE, CUIT, razón social, ítems y totales a Excel.</p>
+    </div>
+    <div class="bg-white rounded-xl border border-slate-200 p-5">
+      <div class="text-brand-600 text-2xl mb-2">📊</div>
+      <h3 class="font-semibold mb-1">Tablas genéricas</h3>
+      <p class="text-sm text-slate-600">Reconstrucción real de filas y columnas, aunque estén en imágenes.</p>
+    </div>
+    <div class="bg-white rounded-xl border border-slate-200 p-5">
+      <div class="text-brand-600 text-2xl mb-2">📄</div>
+      <h3 class="font-semibold mb-1">Contratos y textos</h3>
+      <p class="text-sm text-slate-600">Conversión a Word conservando títulos, párrafos y listas.</p>
+    </div>
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}Documentos — PDF Extractor{% endblock %}
+
+{% block content %}
+<section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
+  <div class="flex items-center justify-between mb-6">
+    <h1 class="text-xl font-semibold text-slate-900">
+      Documentos <span class="text-sm font-normal text-slate-500">({{ total }} total)</span>
+    </h1>
+    <div class="flex gap-2">
+      <a href="/app/documents/new"
+         class="px-3 py-1.5 rounded-md bg-brand-600 text-white text-sm font-medium hover:bg-brand-700">
+        + Subir PDF
+      </a>
+      <a href="/app/history"
+         class="px-3 py-1.5 rounded-md border border-slate-300 text-sm text-slate-600 hover:bg-slate-50">
+        Historial
+      </a>
+    </div>
+  </div>
+
+  {% if not documents %}
+  <div class="text-center py-16 text-slate-500">
+    <p class="text-lg mb-2">No hay documentos todavía</p>
+    <a href="/app/documents/new" class="text-brand-600 hover:underline">Subir tu primer PDF →</a>
+  </div>
+  {% else %}
+  <div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
+    <table class="w-full text-sm">
+      <thead class="bg-slate-50 border-b border-slate-200">
+        <tr>
+          <th class="text-left px-4 py-3 font-medium text-slate-600">Archivo</th>
+          <th class="text-left px-4 py-3 font-medium text-slate-600">Tipo</th>
+          <th class="text-left px-4 py-3 font-medium text-slate-600">Estado</th>
+          <th class="text-left px-4 py-3 font-medium text-slate-600">Páginas</th>
+          <th class="text-left px-4 py-3 font-medium text-slate-600">Tamaño</th>
+          <th class="text-left px-4 py-3 font-medium text-slate-600">Fecha</th>
+          <th class="text-right px-4 py-3 font-medium text-slate-600">Acciones</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-100">
+        {% for doc in documents %}
+        <tr class="hover:bg-slate-50">
+          <td class="px-4 py-3">
+            <a href="/app/documents/detail/{{ doc.id }}" class="text-brand-600 hover:underline font-medium">
+              {{ doc.original_filename }}
+            </a>
+            {% if doc.needs_ocr %}
+            <span class="ml-1 px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 text-xs" title="Requiere OCR">OCR</span>
+            {% endif %}
+          </td>
+          <td class="px-4 py-3 text-slate-600">{{ doc_type_label(doc.doc_type) }}</td>
+          <td class="px-4 py-3">{{ status_badge(doc.status) | safe }}</td>
+          <td class="px-4 py-3 text-slate-500">{{ doc.page_count or '—' }}</td>
+          <td class="px-4 py-3 text-slate-500">{{ (doc.size_bytes / 1024)|round(1) }} KB</td>
+          <td class="px-4 py-3 text-slate-500">{{ doc.created_at.strftime('%d/%m/%Y %H:%M') }}</td>
+          <td class="px-4 py-3 text-right">
+            <a href="/app/documents/detail/{{ doc.id }}"
+               class="text-brand-600 hover:underline text-sm mr-3">Ver</a>
+            <button hx-delete="/app/documents/delete/{{ doc.id }}"
+                    hx-confirm="¿Eliminás este documento?"
+                    hx-target="closest tr"
+                    class="text-red-500 hover:underline text-sm">Eliminar</button>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if pages|length > 1 %}
+  <div class="flex justify-center gap-2 mt-4">
+    {% for p in pages %}
+    <a href="/app/documents/list?page={{ p }}"
+       class="px-3 py-1 rounded text-sm {{ 'bg-brand-600 text-white' if p == page else 'bg-white border border-slate-300 text-slate-600 hover:bg-slate-50' }}">
+      {{ p }}
+    </a>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% endif %}
+</section>
+{% endblock %}

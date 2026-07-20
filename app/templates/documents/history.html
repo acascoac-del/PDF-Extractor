@@ -1,0 +1,199 @@
+{% extends "base.html" %}
+{% block title %}Historial — PDF Extractor{% endblock %}
+
+{% block content %}
+<section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
+  <div class="flex items-center justify-between mb-6">
+    <h1 class="text-xl font-semibold text-slate-900">
+      Historial <span class="text-sm font-normal text-slate-500">({{ total }} documentos)</span>
+    </h1>
+    <a href="/app/documents/new"
+       class="px-3 py-1.5 rounded-md bg-brand-600 text-white text-sm font-medium hover:bg-brand-700">
+      + Subir PDF
+    </a>
+  </div>
+
+  {# ---- Filtros ---- #}
+  <form id="history-filters"
+        hx-get="/app/history"
+        hx-target="#history-results"
+        hx-swap="innerHTML"
+        hx-trigger="change delay:300ms"
+        hx-include="#history-filters"
+        class="bg-white rounded-xl border border-slate-200 p-4 mb-6">
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      {# Estado #}
+      <div>
+        <label for="status" class="block text-xs font-medium text-slate-500 mb-1">Estado</label>
+        <select name="status" id="status"
+                class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 focus:border-brand-500 focus:ring-1 focus:ring-brand-500">
+          <option value="">Todos</option>
+          {% for s in status_options %}
+          <option value="{{ s.value }}" {% if status_filter == s.value %}selected{% endif %}>
+            {% if s.value == 'uploaded' %}Subido
+            {% elif s.value == 'classified' %}Clasificado
+            {% elif s.value == 'queued' %}En cola
+            {% elif s.value == 'processing' %}Procesando
+            {% elif s.value == 'extracted' %}Extraído
+            {% elif s.value == 'completed' %}Completado
+            {% elif s.value == 'failed' %}Error
+            {% else %}{{ s.value }}
+            {% endif %}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      {# Tipo de documento #}
+      <div>
+        <label for="doc_type" class="block text-xs font-medium text-slate-500 mb-1">Tipo</label>
+        <select name="doc_type" id="doc_type"
+                class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 focus:border-brand-500 focus:ring-1 focus:ring-brand-500">
+          <option value="">Todos</option>
+          {% for dt in doc_type_options %}
+          <option value="{{ dt.value }}" {% if doc_type_filter == dt.value %}selected{% endif %}>
+            {{ doc_type_label(dt) }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      {# Fecha desde #}
+      <div>
+        <label for="date_from" class="block text-xs font-medium text-slate-500 mb-1">Desde</label>
+        <input type="date" name="date_from" id="date_from" value="{{ date_from }}"
+               class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 focus:border-brand-500 focus:ring-1 focus:ring-brand-500">
+      </div>
+
+      {# Fecha hasta #}
+      <div>
+        <label for="date_to" class="block text-xs font-medium text-slate-500 mb-1">Hasta</label>
+        <input type="date" name="date_to" id="date_to" value="{{ date_to }}"
+               class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 focus:border-brand-500 focus:ring-1 focus:ring-brand-500">
+      </div>
+    </div>
+
+    {# Botones de acción de filtro #}
+    <div class="flex items-center gap-3 mt-4">
+      <button type="submit"
+              class="px-4 py-2 rounded-md bg-brand-600 text-white text-sm font-medium hover:bg-brand-700">
+        Filtrar
+      </button>
+      <a href="/app/history"
+         class="px-4 py-2 rounded-md border border-slate-300 text-sm text-slate-600 hover:bg-slate-50">
+        Limpiar
+      </a>
+    </div>
+  </form>
+
+  {# ---- Tabla de resultados ---- #}
+  <div id="history-results">
+    {% if not documents %}
+    <div class="text-center py-16 text-slate-500">
+      <p class="text-lg mb-2">No se encontraron documentos</p>
+      {% if status_filter or doc_type_filter or date_from or date_to %}
+      <a href="/app/history" class="text-brand-600 hover:underline">Limpiar filtros</a>
+      {% else %}
+      <a href="/app/documents/new" class="text-brand-600 hover:underline">Subir tu primer PDF</a>
+      {% endif %}
+    </div>
+    {% else %}
+    <div class="bg-white rounded-xl border border-slate-200 overflow-hidden">
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead class="bg-slate-50 border-b border-slate-200">
+            <tr>
+              <th class="text-left px-4 py-3 font-medium text-slate-600">Archivo</th>
+              <th class="text-left px-4 py-3 font-medium text-slate-600">Tipo</th>
+              <th class="text-left px-4 py-3 font-medium text-slate-600">Estado</th>
+              <th class="text-left px-4 py-3 font-medium text-slate-600">Confianza</th>
+              <th class="text-left px-4 py-3 font-medium text-slate-600">Paginas</th>
+              <th class="text-left px-4 py-3 font-medium text-slate-600">Tamano</th>
+              <th class="text-left px-4 py-3 font-medium text-slate-600">Fecha</th>
+              <th class="text-right px-4 py-3 font-medium text-slate-600">Acciones</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100">
+            {% for doc in documents %}
+            <tr class="hover:bg-slate-50">
+              <td class="px-4 py-3">
+                <a href="/app/documents/detail/{{ doc.id }}" class="text-brand-600 hover:underline font-medium">
+                  {{ doc.original_filename }}
+                </a>
+                {% if doc.needs_ocr %}
+                <span class="ml-1 px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 text-xs" title="Requiere OCR">OCR</span>
+                {% endif %}
+              </td>
+              <td class="px-4 py-3 text-slate-600">{{ doc_type_label(doc.doc_type) }}</td>
+              <td class="px-4 py-3">{{ status_badge(doc.status) | safe }}</td>
+              <td class="px-4 py-3 text-slate-500">
+                {% if doc.doc_type_confidence is not none %}
+                  {{ (doc.doc_type_confidence * 100)|round(0)|int }}%
+                {% else %}
+                  &mdash;
+                {% endif %}
+              </td>
+              <td class="px-4 py-3 text-slate-500">{{ doc.page_count or '&mdash;' }}</td>
+              <td class="px-4 py-3 text-slate-500">
+                {% if doc.size_bytes < 1048576 %}
+                  {{ (doc.size_bytes / 1024)|round(1) }} KB
+                {% else %}
+                  {{ (doc.size_bytes / 1048576)|round(1) }} MB
+                {% endif %}
+              </td>
+              <td class="px-4 py-3 text-slate-500">{{ doc.created_at.strftime('%d/%m/%Y %H:%M') }}</td>
+              <td class="px-4 py-3 text-right whitespace-nowrap">
+                <a href="/app/documents/detail/{{ doc.id }}"
+                   class="text-brand-600 hover:underline text-sm mr-3">Ver</a>
+                {% if doc.extraction %}
+                <a href="/app/documents/{{ doc.id }}/export/xlsx"
+                   class="text-green-600 hover:underline text-sm mr-3">Descargar</a>
+                {% endif %}
+                <button hx-delete="/app/documents/delete/{{ doc.id }}"
+                        hx-confirm="Eliminar este documento?"
+                        hx-target="closest tr"
+                        hx-swap="outerHTML"
+                        class="text-red-500 hover:underline text-sm">Eliminar</button>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    {# ---- Paginacion ---- #}
+    {% if total_pages > 1 %}
+    <div class="flex justify-center gap-2 mt-6">
+      {% if page > 1 %}
+      <a href="/app/history?page={{ page - 1 }}&status={{ status_filter }}&doc_type={{ doc_type_filter }}&date_from={{ date_from }}&date_to={{ date_to }}"
+         class="px-3 py-1 rounded text-sm bg-white border border-slate-300 text-slate-600 hover:bg-slate-50">
+        &laquo; Anterior
+      </a>
+      {% endif %}
+
+      {% for p in range(1, total_pages + 1) %}
+        {% if p == page %}
+        <span class="px-3 py-1 rounded text-sm bg-brand-600 text-white">{{ p }}</span>
+        {% elif p <= 3 or p > total_pages - 2 or (p >= page - 1 and p <= page + 1) %}
+        <a href="/app/history?page={{ p }}&status={{ status_filter }}&doc_type={{ doc_type_filter }}&date_from={{ date_from }}&date_to={{ date_to }}"
+           class="px-3 py-1 rounded text-sm bg-white border border-slate-300 text-slate-600 hover:bg-slate-50">
+          {{ p }}
+        </a>
+        {% elif p == 4 or p == total_pages - 2 %}
+        <span class="px-2 py-1 text-slate-400">...</span>
+        {% endif %}
+      {% endfor %}
+
+      {% if page < total_pages %}
+      <a href="/app/history?page={{ page + 1 }}&status={{ status_filter }}&doc_type={{ doc_type_filter }}&date_from={{ date_from }}&date_to={{ date_to }}"
+         class="px-3 py-1 rounded text-sm bg-white border border-slate-300 text-slate-600 hover:bg-slate-50">
+        Siguiente &raquo;
+      </a>
+      {% endif %}
+    </div>
+    {% endif %}
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Panel — PDF Extractor{% endblock %}
+
+{% block content %}
+<section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
+  <div class="flex items-center justify-between mb-8">
+    <div>
+      <h1 class="text-2xl font-semibold text-slate-900">Panel</h1>
+      <p class="text-sm text-slate-500">Hola, {{ user.full_name or user.username }} 👋</p>
+    </div>
+    <a href="/app/documents/new"
+       class="px-4 py-2 rounded-md bg-brand-600 text-white hover:bg-brand-700 text-sm font-medium">
+      + Subir PDF
+    </a>
+  </div>
+
+  <div class="grid grid-cols-1 sm:grid-cols-3 gap-5">
+    <div class="bg-white rounded-xl border border-slate-200 p-5">
+      <div class="text-xs uppercase tracking-wide text-slate-500">Documentos</div>
+      <div class="text-3xl font-semibold text-slate-900 mt-1" id="stat-docs">—</div>
+      <div class="text-xs text-slate-400 mt-1">Subidos en total</div>
+    </div>
+    <div class="bg-white rounded-xl border border-slate-200 p-5">
+      <div class="text-xs uppercase tracking-wide text-slate-500">Procesados</div>
+      <div class="text-3xl font-semibold text-green-600 mt-1" id="stat-done">—</div>
+      <div class="text-xs text-slate-400 mt-1">Extracción completada</div>
+    </div>
+    <div class="bg-white rounded-xl border border-slate-200 p-5">
+      <div class="text-xs uppercase tracking-wide text-slate-500">Facturas</div>
+      <div class="text-3xl font-semibold text-brand-600 mt-1" id="stat-invoices">—</div>
+      <div class="text-xs text-slate-400 mt-1">Tipo más frecuente</div>
+    </div>
+  </div>
+
+  <div class="mt-10 bg-white rounded-xl border border-slate-200 p-5">
+    <h2 class="font-semibold text-slate-900 mb-3">Documentos recientes</h2>
+    <div hx-get="/app/documents/recent" hx-trigger="load" hx-swap="innerHTML">
+      <p class="text-sm text-slate-400">Cargando…</p>
+    </div>
+  </div>
+</section>
+{% endblock %}

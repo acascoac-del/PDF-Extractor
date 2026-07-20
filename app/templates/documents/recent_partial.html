@@ -1,0 +1,29 @@
+{# Partial HTMX: filas recientes para el dashboard #}
+{% if documents %}
+<table class="w-full text-sm">
+  <thead class="bg-slate-50 border-b border-slate-200">
+    <tr>
+      <th class="text-left px-3 py-2 font-medium text-slate-600">Archivo</th>
+      <th class="text-left px-3 py-2 font-medium text-slate-600">Tipo</th>
+      <th class="text-left px-3 py-2 font-medium text-slate-600">Estado</th>
+      <th class="text-left px-3 py-2 font-medium text-slate-600">Fecha</th>
+      <th class="text-right px-3 py-2 font-medium text-slate-600"></th>
+    </tr>
+  </thead>
+  <tbody class="divide-y divide-slate-100">
+    {% for doc in documents %}
+    <tr class="hover:bg-slate-50">
+      <td class="px-3 py-2 text-slate-700">{{ doc.original_filename }}</td>
+      <td class="px-3 py-2 text-slate-500">{{ doc_type_label(doc.doc_type) }}</td>
+      <td class="px-3 py-2">{{ status_badge(doc.status) | safe }}</td>
+      <td class="px-3 py-2 text-slate-500 text-xs">{{ doc.created_at.strftime('%d/%m/%Y %H:%M') }}</td>
+      <td class="px-3 py-2 text-right">
+        <a href="/app/documents/detail/{{ doc.id }}" class="text-brand-600 hover:underline text-xs">Ver</a>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="text-sm text-slate-400 py-4 text-center">No hay documentos todavía. <a href="/app/documents/new" class="text-brand-600 hover:underline">Subir PDF →</a></p>
+{% endif %}

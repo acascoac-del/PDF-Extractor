@@ -1,0 +1,29 @@
+{# Partial: resultado de upload #}
+{% if errors %}
+<div class="mb-4">
+  {% for err in errors %}
+  <div class="text-red-600 text-sm">⚠ {{ err }}</div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if results %}
+<div class="bg-green-50 border border-green-200 rounded-lg p-4">
+  <p class="font-medium text-green-800 mb-2">✓ {{ results|length }} documento(s) subido(s)</p>
+  <div class="space-y-2">
+    {% for r in results %}
+    <div class="flex items-center justify-between text-sm">
+      <span class="text-slate-700">{{ r.filename }}
+        <span class="text-slate-400">({{ r.size }} bytes)</span>
+      </span>
+      <a href="/app/documents/detail/{{ r.id }}"
+         class="text-brand-600 hover:underline font-medium">Ver →</a>
+    </div>
+    {% endfor %}
+  </div>
+  <div class="mt-3 flex gap-2">
+    <a href="/app/documents/list" class="text-sm text-brand-600 hover:underline">Ver todos los documentos</a>
+    <a href="/app/documents/new" class="text-sm text-brand-600 hover:underline">Subir más</a>
+  </div>
+</div>
+{% endif %}
