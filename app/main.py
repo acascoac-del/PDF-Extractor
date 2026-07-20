@@ -2,6 +2,8 @@
 
 En esta primera iteración expone un health-check y crea las tablas al arranque.
 Las siguientes fases agregan routers (auth, documents, exports, api).
+
+Adaptado para Vercel: Celery opcional, procesamiento síncrono.
 """
 from __future__ import annotations
 
@@ -12,14 +14,14 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from app import __version__
-from app.auth.router import router as auth_api_router
 from app.config import settings
-from app.routers.pages import router as pages_router
-from app.routers.documents import router as documents_router
-from app.routers.exports import router as exports_router
-from app.routers.api import router as api_router
-from app.routers.settings import router as settings_router
-from app.routers.subscription import router as subscription_router
+
+# Celery es opcional (no disponible en Vercel serverless)
+try:
+    from app.tasks.celery_app import celery_app
+    CELERY_AVAILABLE = True
+except ImportError:
+    CELERY_AVAILABLE = False
 
 
 @asynccontextmanager
@@ -52,6 +54,14 @@ app.mount("/static", StaticFiles(directory="app/static"), name="static")
 templates = Jinja2Templates(directory="app/templates")
 
 # Routers
+from app.auth.router import router as auth_api_router
+from app.routers.pages import router as pages_router
+from app.routers.documents import router as documents_router
+from app.routers.exports import router as exports_router
+from app.routers.api import router as api_router
+from app.routers.settings import router as settings_router
+from app.routers.subscription import router as subscription_router
+
 app.include_router(pages_router)
 app.include_router(auth_api_router)
 app.include_router(documents_router)
@@ -69,4 +79,7 @@ def health() -> dict:
         "version": __version__,
         "environment": settings.environment,
         "llm_enabled": settings.llm_enabled,
+        "r2_enabled": settings.r2_enabled,
+        "celery_enabled": settings.celery_enabled,
+        "mp_enabled": settings.mp_enabled,
     }

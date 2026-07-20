@@ -4,6 +4,8 @@ Pipeline:
   1. Intentar pdfplumber (texto seleccionable).
   2. Si hay poco texto por página → asumir escaneado y pasar OCR.
   3. Devolver: pages_text (lista por página), full_text, page_count, is_scanned.
+
+Soporta tanto rutas de archivo como bytes directos (para R2).
 """
 from __future__ import annotations
 
@@ -34,23 +36,32 @@ class PdfContent:
         return sum(len(t) for t in self.pages_text)
 
 
-def extract_text(path: Path | str, force_ocr: bool = False) -> PdfContent:
+def extract_text(path_or_bytes: Path | str | bytes, force_ocr: bool = False) -> PdfContent:
     """Extrae texto de un PDF.
 
     Args:
-        path: ruta al PDF.
+        path_or_bytes: ruta al PDF o bytes del contenido del PDF.
         force_ocr: ignorar texto nativo y forzar OCR.
     """
-    path = Path(path)
-    if not path.exists():
-        raise FileNotFoundError(path)
+    is_bytes = isinstance(path_or_bytes, bytes)
+    if not is_bytes:
+        path = Path(path_or_bytes)
+        if not path.exists():
+            raise FileNotFoundError(path)
 
     content = PdfContent()
 
     # ---- Texto nativo + tablas con pdfplumber ----
     if not force_ocr:
         try:
-            with pdfplumber.open(str(path)) as pdf:
+            if is_bytes:
+                import io
+                pdf_file = io.BytesIO(path_or_bytes)
+                pdf = pdfplumber.open(pdf_file)
+            else:
+                pdf = pdfplumber.open(str(path))
+
+            with pdf:
                 content.page_count = len(pdf.pages)
                 for page in pdf.pages:
                     text = page.extract_text() or ""
@@ -70,7 +81,10 @@ def extract_text(path: Path | str, force_ocr: bool = False) -> PdfContent:
     # ---- PyMuPDF como respaldo y para page_count ----
     if content.page_count == 0:
         try:
-            doc = fitz.open(str(path))
+            if is_bytes:
+                doc = fitz.open(stream=path_or_bytes, filetype="pdf")
+            else:
+                doc = fitz.open(str(path))
             content.page_count = doc.page_count
             doc.close()
         except Exception:
@@ -87,7 +101,7 @@ def extract_text(path: Path | str, force_ocr: bool = False) -> PdfContent:
     if content.is_scanned or force_ocr:
         from app.services.ocr import ocr_pdf
 
-        ocr_pages = ocr_pdf(path)
+        ocr_pages = ocr_pdf(path_or_bytes)
         # Mezclar: si ya había algo de texto nativo, lo dejamos pero agregamos OCR.
         if content.pages_text and not force_ocr:
             content.pages_text = [
@@ -101,10 +115,14 @@ def extract_text(path: Path | str, force_ocr: bool = False) -> PdfContent:
     return content
 
 
-def render_page_image(path: Path | str, page_number: int, dpi: int | None = None) -> bytes:
+def render_page_image(path_or_bytes: Path | str | bytes, page_number: int, dpi: int | None = None) -> bytes:
     """Renderiza una página como PNG (para preview o visor)."""
     dpi = dpi or settings.ocr_dpi
-    doc = fitz.open(str(path))
+    is_bytes = isinstance(path_or_bytes, bytes)
+    if is_bytes:
+        doc = fitz.open(stream=path_or_bytes, filetype="pdf")
+    else:
+        doc = fitz.open(str(path_or_bytes))
     try:
         page = doc[page_number]
         zoom = dpi / 72

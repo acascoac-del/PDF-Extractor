@@ -19,6 +19,13 @@
   </div>
   {% endif %}
 
+  {# Mensaje de pendiente #}
+  {% if pending %}
+  <div class="mb-6 p-4 rounded-lg bg-blue-50 border border-blue-200 text-blue-800">
+    Tu pago esta pendiente de aprobacion. Te notificaremos cuando se confirme.
+  </div>
+  {% endif %}
+
   {# Aviso de limite alcanzado #}
   {% if limit_reached %}
   <div class="mb-6 p-4 rounded-lg bg-red-50 border border-red-200 text-red-800">
@@ -92,8 +99,8 @@
       <p class="mt-1 text-slate-500 text-sm">Para uso profesional sin limites.</p>
 
       <div class="mt-6">
-        <span class="text-4xl font-bold text-slate-900">$5</span>
-        <span class="text-slate-500">/mes</span>
+        <span class="text-4xl font-bold text-slate-900">$5.000</span>
+        <span class="text-slate-500">/mes ARS</span>
       </div>
 
       <ul class="mt-6 space-y-3 text-sm text-slate-600">
@@ -130,7 +137,7 @@
           <form method="post" action="/app/subscribe">
             <button type="submit"
                     class="w-full py-3 px-4 rounded-lg bg-brand-600 text-white font-semibold hover:bg-brand-700 transition">
-              Suscribirse
+              Pagar con Mercado Pago
             </button>
           </form>
         {% endif %}
@@ -139,8 +146,25 @@
 
   </div>
 
+  {# Portal de gestion (cuando el usuario es Pro) #}
+  {% if show_portal and plan == 'pro' %}
+  <div class="mt-10 p-6 rounded-2xl border border-slate-200 bg-white shadow-sm">
+    <h3 class="text-lg font-semibold text-slate-900 mb-4">Gestionar suscripcion</h3>
+    <p class="text-sm text-slate-600 mb-4">
+      Tu suscripcion esta activa. Puedes cancelarla en cualquier momento.
+    </p>
+    <form method="post" action="/app/subscribe/cancel-subscription"
+          onsubmit="return confirm('¿Estas seguro de que deseas cancelar tu suscripcion? Perderas acceso al plan Pro al final del periodo de facturacion.')">
+      <button type="submit"
+              class="px-4 py-2 rounded-lg bg-red-50 text-red-700 font-medium hover:bg-red-100 transition text-sm">
+        Cancelar suscripcion
+      </button>
+    </form>
+  </div>
+  {% endif %}
+
   <p class="mt-8 text-center text-xs text-slate-400">
-    Pagos procesados de forma segura por Stripe. Puedes cancelar tu suscripcion en cualquier momento.
+    Pagos procesados de forma segura por Mercado Pago. Puedes cancelar tu suscripcion en cualquier momento.
   </p>
 </div>
 {% endblock %}

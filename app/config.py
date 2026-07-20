@@ -26,6 +26,7 @@ class Settings(BaseSettings):
 
     # --- App ---
     app_name: str = "PDF Extractor"
+    app_url: str = ""  # https://tu-app.vercel.app (para webhooks y redirecciones)
     environment: str = "development"
     secret_key: str = "cambia-esta-clave-por-una-larga-y-aleatoria"
     access_token_expire_minutes: int = 60 * 24 * 7  # 7 días
@@ -34,10 +35,10 @@ class Settings(BaseSettings):
     # --- Base de datos ---
     database_url: str = "sqlite:///./storage/app.db"
 
-    # --- Redis / Celery ---
-    redis_url: str = "redis://redis:6379/0"
-    celery_broker_url: str = "redis://redis:6379/0"
-    celery_result_backend: str = "redis://redis:6379/1"
+    # --- Redis / Celery (opcional, no necesario en Vercel) ---
+    redis_url: str = ""
+    celery_broker_url: str = ""
+    celery_result_backend: str = ""
 
     # --- LLM (OpenAI-compatible) ---
     openai_base_url: str = "https://api.openai.com/v1"
@@ -51,18 +52,31 @@ class Settings(BaseSettings):
     ocr_languages: str = "spa+eng"
     ocr_dpi: int = 300
 
-    # --- Almacenamiento ---
+    # --- Almacenamiento local (desarrollo) ---
     storage_dir: str = str(BASE_DIR / "storage")
     upload_dir: str = str(BASE_DIR / "storage" / "uploads")
     processed_dir: str = str(BASE_DIR / "storage" / "processed")
     exports_dir: str = str(BASE_DIR / "storage" / "exports")
     max_upload_mb: int = 30
 
-    # --- Stripe ---
+    # --- Cloudflare R2 (produccion / Vercel) ---
+    r2_endpoint_url: str = ""  # https://xxx.r2.cloudflarestorage.com
+    r2_access_key_id: str = ""
+    r2_secret_access_key: str = ""
+    r2_bucket_name: str = "pdf-extractor"
+    r2_public_url: str = ""  # https://pub-xxx.r2.dev (opcional, para acceso publico)
+
+    # --- Mercado Pago ---
+    mp_access_token: str = ""
+    mp_public_key: str = ""
+    mp_webhook_secret: str = ""
+    mp_plan_id: str = ""  # Plan ID de Mercado Pago
+
+    # --- Stripe (legacy, mantener para compatibilidad) ---
     stripe_secret_key: str = ""
     stripe_publishable_key: str = ""
-    stripe_price_id: str = ""  # price_xxx del dashboard de Stripe
-    stripe_webhook_secret: str = ""  # whsec_xxx del webhook de Stripe
+    stripe_price_id: str = ""
+    stripe_webhook_secret: str = ""
 
     # --- Seguridad / retención ---
     auto_delete_days: int = 30
@@ -83,13 +97,30 @@ class Settings(BaseSettings):
         return self.database_url.startswith("sqlite")
 
     @property
+    def is_postgres(self) -> bool:
+        return not self.is_sqlite
+
+    @property
     def llm_enabled(self) -> bool:
         return bool(self.openai_api_key)
 
+    @property
+    def r2_enabled(self) -> bool:
+        return bool(self.r2_access_key_id and self.r2_endpoint_url)
+
+    @property
+    def celery_enabled(self) -> bool:
+        return bool(self.celery_broker_url)
+
+    @property
+    def mp_enabled(self) -> bool:
+        return bool(self.mp_access_token)
+
     def ensure_dirs(self) -> None:
         """Crea los directorios de almacenamiento si no existen."""
-        for d in (self.storage_dir, self.upload_dir, self.processed_dir, self.exports_dir):
-            Path(d).mkdir(parents=True, exist_ok=True)
+        if not self.r2_enabled:
+            for d in (self.storage_dir, self.upload_dir, self.processed_dir, self.exports_dir):
+                Path(d).mkdir(parents=True, exist_ok=True)
 
 
 @lru_cache

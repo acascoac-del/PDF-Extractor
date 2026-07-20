@@ -1,9 +1,11 @@
 """OCR de PDFs con Tesseract (vía PyMuPDF para rasterizar).
 
 Detecta automáticamente el ejecutable de Tesseract en Windows si no está en PATH.
+Soporta tanto rutas de archivo como bytes directos (para R2).
 """
 from __future__ import annotations
 
+import io
 from pathlib import Path
 
 import fitz  # PyMuPDF
@@ -36,13 +38,22 @@ def _ensure_tesseract() -> None:
     _configured = True
 
 
-def ocr_pdf(path: Path | str, languages: str | None = None, dpi: int | None = None) -> list[str]:
-    """Devuelve una lista con el texto OCR por página."""
+def ocr_pdf(path_or_bytes: Path | str | bytes, languages: str | None = None, dpi: int | None = None) -> list[str]:
+    """Devuelve una lista con el texto OCR por página.
+
+    Args:
+        path_or_bytes: ruta al PDF o bytes del contenido del PDF.
+    """
     _ensure_tesseract()
     langs = languages or settings.ocr_languages
     dpi = dpi or settings.ocr_dpi
 
-    doc = fitz.open(str(path))
+    is_bytes = isinstance(path_or_bytes, bytes)
+    if is_bytes:
+        doc = fitz.open(stream=path_or_bytes, filetype="pdf")
+    else:
+        doc = fitz.open(str(path_or_bytes))
+
     zoom = dpi / 72
     matrix = fitz.Matrix(zoom, zoom)
 
@@ -66,7 +77,6 @@ def ocr_pdf(path: Path | str, languages: str | None = None, dpi: int | None = No
 def ocr_image(image_bytes: bytes, languages: str | None = None) -> str:
     """OCR directo sobre bytes de una imagen."""
     _ensure_tesseract()
-    import io
 
     langs = languages or settings.ocr_languages
     img = Image.open(io.BytesIO(image_bytes))

@@ -2,6 +2,8 @@
 
 Todo lo que sea la interfaz web de documentos (HTMX partials + páginas completas).
 La API REST v1 vive en routers/api.py.
+
+Adaptado para Vercel: procesamiento síncrono, almacenamiento en R2 o local.
 """
 from __future__ import annotations
 
@@ -18,7 +20,7 @@ from app.deps import get_current_user_optional, get_db, require_user
 from app.models.document import DocStatus, DocType, Document
 from app.models.extraction import Extraction
 from app.models.user import User
-from app.services.storage import abs_path_for, save_upload
+from app.services.storage import abs_path_for, save_upload, read_file
 from app.services.pdf_text import extract_text
 from app.services.limits import check_pdf_limit, increment_pdf_count
 
@@ -134,8 +136,9 @@ async def upload_files(
     for r in results:
         doc = db.get(Document, r["id"])
         try:
-            pdf_path = abs_path_for(doc.upload_path)
-            pdf_content = extract_text(pdf_path)
+            # Leer PDF desde R2 o local
+            pdf_bytes = read_file(doc.upload_path)
+            pdf_content = extract_text(pdf_bytes)
             doc.page_count = pdf_content.page_count
             doc.is_scanned = pdf_content.is_scanned
             doc.needs_ocr = pdf_content.is_scanned
@@ -279,15 +282,15 @@ def classify_document(
     doc.doc_type_confidence = 1.0
     doc.status = DocStatus.QUEUED
 
-    # Por ahora procesamiento síncrono; en Fase 11 será Celery.
+    # Procesamiento síncrono (compatible con Vercel serverless)
     db.commit()
 
-    # Ejecutar extracción directamente (sincrono, placeholder hasta Fase 11)
     from app.services.classification import run_pipeline_sync
 
     try:
-        pdf_path = abs_path_for(doc.upload_path)
-        run_pipeline_sync(doc, pdf_path, db, user=user)
+        # Leer PDF desde R2 o local
+        pdf_bytes = read_file(doc.upload_path)
+        run_pipeline_sync(doc, pdf_bytes, db, user=user)
         # Incrementar contador de PDFs procesados
         increment_pdf_count(user, db)
     except Exception as e:
@@ -331,11 +334,14 @@ def preview_pdf(
     ).scalar_one_or_none()
     if doc is None:
         raise HTTPException(404)
-    pdf_path = abs_path_for(doc.upload_path)
-    if not pdf_path.exists():
-        raise HTTPException(404, "Archivo no encontrado en disco.")
+
+    try:
+        pdf_bytes = read_file(doc.upload_path)
+    except FileNotFoundError:
+        raise HTTPException(404, "Archivo no encontrado.")
+
     return Response(
-        content=pdf_path.read_bytes(),
+        content=pdf_bytes,
         media_type="application/pdf",
         headers={"Content-Disposition": f"inline; filename={doc.original_filename}"},
     )

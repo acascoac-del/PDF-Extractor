@@ -2,6 +2,8 @@
 
 Fase 5 lo completa con reglas + LLM.
 Por ahora: clasificación básica por keywords y pipeline que marca estado.
+
+Adaptado para Vercel: acepta bytes directos (para R2) además de rutas de archivo.
 """
 from __future__ import annotations
 
@@ -70,16 +72,17 @@ def classify_document(doc: Document, full_text: str) -> None:
     doc.status = DocStatus.CLASSIFIED
 
 
-def run_pipeline_sync(doc: Document, pdf_path: Path, db: Session, user=None) -> None:
+def run_pipeline_sync(doc: Document, pdf_path_or_bytes: Path | str | bytes, db: Session, user=None) -> None:
     """Pipeline síncrono completo: texto → clasificación → extracción.
 
-    En Fase 11 esto se migra a Celery como tarea asíncrona.
+    Acepta tanto una ruta de archivo como bytes directos del PDF.
+    En Vercel se usa con bytes descargados de R2.
     """
     doc.status = DocStatus.PROCESSING
     db.commit()
 
-    # 1. Extraer texto
-    content = extract_text(pdf_path)
+    # 1. Extraer texto (soporta bytes o ruta)
+    content = extract_text(pdf_path_or_bytes)
     doc.page_count = content.page_count
     doc.is_scanned = content.is_scanned
     doc.needs_ocr = content.is_scanned

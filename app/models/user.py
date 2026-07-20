@@ -37,10 +37,16 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
     settings: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=None)
 
-    # --- Suscripción / Plan ---
+    # --- Suscripcion / Plan ---
     plan: Mapped[str] = mapped_column(String(16), default="free", nullable=False)
+
+    # Mercado Pago (nuevo)
+    mp_preapproval_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+    # Stripe (legacy, mantener para compatibilidad)
     stripe_customer_id: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
     stripe_subscription_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
     subscription_status: Mapped[str] = mapped_column(String(16), default="none", nullable=False)
     subscription_end_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     pdf_count_month: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

@@ -2,6 +2,8 @@
 
 Todos los endpoints requieren autenticacion via Bearer token (JWT o API key).
 Prefijo: /api/v1
+
+Adaptado para Vercel: almacenamiento en R2 o local, procesamiento síncrono.
 """
 from __future__ import annotations
 
@@ -16,7 +18,7 @@ from app.models.document import DocStatus, DocType, Document
 from app.models.extraction import Extraction
 from app.models.user import User
 from app.services.classification import run_pipeline_sync
-from app.services.storage import abs_path_for, save_upload
+from app.services.storage import abs_path_for, save_upload, read_file
 
 router = APIRouter(prefix="/api/v1")
 
@@ -133,8 +135,8 @@ async def upload_document(
     try:
         from app.services.pdf_text import extract_text
 
-        pdf_path = abs_path_for(doc.upload_path)
-        pdf_content = extract_text(pdf_path)
+        pdf_bytes = read_file(doc.upload_path)
+        pdf_content = extract_text(pdf_bytes)
         doc.page_count = pdf_content.page_count
         doc.is_scanned = pdf_content.is_scanned
         doc.needs_ocr = pdf_content.is_scanned
@@ -198,8 +200,8 @@ def trigger_extraction(
         db.flush()
 
     try:
-        pdf_path = abs_path_for(doc.upload_path)
-        run_pipeline_sync(doc, pdf_path, db)
+        pdf_bytes = read_file(doc.upload_path)
+        run_pipeline_sync(doc, pdf_bytes, db)
     except Exception as e:
         doc.status = DocStatus.FAILED
         doc.error_message = str(e)

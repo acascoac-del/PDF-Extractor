@@ -1,4 +1,7 @@
-"""Configuración de Celery."""
+"""Configuración de Celery.
+
+Este módulo solo se importa si Celery está disponible (no en Vercel serverless).
+"""
 from __future__ import annotations
 
 from celery import Celery

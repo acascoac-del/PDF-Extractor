@@ -1,6 +1,7 @@
 """Configuración de la base de datos con SQLAlchemy 2.x.
 
-SQLite por defecto, fácilmente migrable a Postgres cambiando DATABASE_URL.
+SQLite por defecto, PostgreSQL via DATABASE_URL (Neon, etc.).
+Para Vercel serverless: pool adaptado a conexiones efímeras.
 """
 from __future__ import annotations
 
@@ -12,17 +13,29 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from app.config import settings
 
 
-# SQLite necesita argumentos extra para permitir uso desde múltiples threads
-# (Celery worker + web app comparten la misma DB en desarrollo).
+# Argumentos de conexion segun el motor de base de datos
 _connect_args: dict = {}
+_engine_kwargs: dict = {
+    "pool_pre_ping": True,
+    "future": True,
+}
+
 if settings.is_sqlite:
+    # SQLite necesita argumentos extra para permitir uso desde múltiples threads
     _connect_args = {"check_same_thread": False, "timeout": 30}
+else:
+    # PostgreSQL (Neon / Vercel): pool reducido para serverless
+    _engine_kwargs.update({
+        "pool_size": 5,
+        "max_overflow": 0,
+        "pool_recycle": 300,  # Reciclar conexiones cada 5 min
+        "pool_timeout": 10,
+    })
 
 engine = create_engine(
     settings.database_url,
     connect_args=_connect_args,
-    pool_pre_ping=True,
-    future=True,
+    **_engine_kwargs,
 )
 
 SessionLocal = sessionmaker(

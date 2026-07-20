@@ -1,6 +1,11 @@
-"""Router de suscripcion: precios, checkout, webhooks, portal de cliente."""
+"""Router de suscripcion: precios, checkout, webhooks, portal de cliente.
+
+Utiliza Mercado Pago como procesador de pagos.
+"""
 from __future__ import annotations
 
+import hashlib
+import hmac
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -12,7 +17,6 @@ from app.config import settings
 from app.deps import get_db, get_current_user_optional, require_user
 from app.models.user import User
 from app.services.limits import check_pdf_limit, FREE_PDF_LIMIT
-from app.services import stripe_service
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +36,7 @@ def pricing_page(
     """Muestra los planes Free y Pro con el uso actual del usuario."""
     used = 0
     plan = "free"
-    stripe_publishable = settings.stripe_publishable_key
+    mp_public_key = settings.mp_public_key
 
     if user:
         can_process, used, _limit = check_pdf_limit(user)
@@ -48,12 +52,12 @@ def pricing_page(
             "used": used,
             "free_limit": FREE_PDF_LIMIT,
             "limit_reached": limit == 1,
-            "stripe_publishable_key": stripe_publishable,
+            "mp_public_key": mp_public_key,
         },
     )
 
 
-# ============ Checkout de Stripe ============
+# ============ Checkout de Mercado Pago ============
 
 @router.post("/app/subscribe")
 def subscribe(
@@ -61,31 +65,48 @@ def subscribe(
     user: User = Depends(require_user),
     db: Session = Depends(get_db),
 ):
-    """Crea una Checkout Session de Stripe y redirige al usuario."""
+    """Crea una preferencia de Mercado Pago y redirige al checkout."""
     if user.plan == "pro":
         return RedirectResponse("/app/pricing", status_code=303)
 
-    success_url = str(request.base_url).rstrip("/") + "/app/subscribe/success?session_id={CHECKOUT_SESSION_ID}"
-    cancel_url = str(request.base_url).rstrip("/") + "/app/subscribe/cancel"
+    base_url = str(request.base_url).rstrip("/")
+    success_url = f"{base_url}/app/subscribe/success"
+    failure_url = f"{base_url}/app/subscribe/cancel"
+    pending_url = f"{base_url}/app/subscribe/pending"
 
     try:
-        session = stripe_service.create_checkout_session(user, success_url, cancel_url)
-        db.commit()  # guardar posible stripe_customer_id
-        return RedirectResponse(session.url, status_code=303)
+        from app.services.mercadopago_service import create_preference
+
+        preference = create_preference(user, success_url, failure_url, pending_url)
+        db.commit()
+
+        # Redirigir al checkout de Mercado Pago
+        checkout_url = preference.get("init_point")
+        if not checkout_url:
+            # Sandbox si no hay init_point
+            checkout_url = preference.get("sandbox_init_point", "")
+        if not checkout_url:
+            raise RuntimeError("No se pudo obtener la URL de checkout.")
+
+        return RedirectResponse(checkout_url, status_code=303)
     except Exception as e:
-        logger.error("Error creando checkout session: %s", e)
+        logger.error("Error creando preferencia de Mercado Pago: %s", e)
         raise HTTPException(500, "Error al crear la sesion de pago.")
 
 
-# ============ Exito / Cancelacion ============
+# ============ Exito / Cancelacion / Pendiente ============
 
 @router.get("/app/subscribe/success", response_class=HTMLResponse)
 def subscribe_success(
     request: Request,
-    session_id: str = "",
     user: User = Depends(require_user),
+    db: Session = Depends(get_db),
 ):
-    """Pagina mostrada despues de un checkout exitoso."""
+    """Pagina mostrada despues de un checkout exitoso.
+
+    Mercado Pago redirige aqui con parametros en la URL.
+    El webhook se encarga de activar la suscripcion; esta pagina solo muestra confirmacion.
+    """
     return templates.TemplateResponse(
         "pricing.html",
         {
@@ -95,7 +116,7 @@ def subscribe_success(
             "used": user.pdf_count_month,
             "free_limit": FREE_PDF_LIMIT,
             "success": True,
-            "stripe_publishable_key": settings.stripe_publishable_key,
+            "mp_public_key": settings.mp_public_key,
         },
     )
 
@@ -115,126 +136,194 @@ def subscribe_cancel(
             "used": user.pdf_count_month,
             "free_limit": FREE_PDF_LIMIT,
             "cancelled": True,
-            "stripe_publishable_key": settings.stripe_publishable_key,
+            "mp_public_key": settings.mp_public_key,
         },
     )
 
 
-# ============ Portal de cliente ============
-
-@router.get("/app/subscribe/portal")
-def customer_portal(
+@router.get("/app/subscribe/pending", response_class=HTMLResponse)
+def subscribe_pending(
     request: Request,
     user: User = Depends(require_user),
 ):
-    """Redirige al Stripe Customer Portal para gestionar la suscripcion."""
-    if not user.stripe_customer_id:
+    """Pagina mostrada si el pago queda pendiente."""
+    return templates.TemplateResponse(
+        "pricing.html",
+        {
+            "request": request,
+            "user": user,
+            "plan": user.plan,
+            "used": user.pdf_count_month,
+            "free_limit": FREE_PDF_LIMIT,
+            "pending": True,
+            "mp_public_key": settings.mp_public_key,
+        },
+    )
+
+
+# ============ Portal de suscripcion ============
+
+@router.get("/app/subscribe/portal")
+def subscription_portal(
+    request: Request,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """Muestra opciones de gestion de suscripcion (cancelar, etc.)."""
+    if user.plan != "pro":
         return RedirectResponse("/app/pricing", status_code=303)
 
-    return_url = str(request.base_url).rstrip("/") + "/app/settings"
+    return templates.TemplateResponse(
+        "pricing.html",
+        {
+            "request": request,
+            "user": user,
+            "plan": user.plan,
+            "used": user.pdf_count_month,
+            "free_limit": FREE_PDF_LIMIT,
+            "show_portal": True,
+            "mp_public_key": settings.mp_public_key,
+        },
+    )
+
+
+@router.post("/app/subscribe/cancel-subscription")
+def cancel_subscription(
+    request: Request,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """Cancela la suscripcion activa del usuario."""
+    if user.plan != "pro" or not user.mp_preapproval_id:
+        return RedirectResponse("/app/pricing", status_code=303)
+
     try:
-        session = stripe_service.create_portal_session(user, return_url)
-        return RedirectResponse(session.url, status_code=303)
+        from app.services.mercadopago_service import cancel_preapproval
+
+        cancel_preapproval(user.mp_preapproval_id)
+        user.plan = "free"
+        user.subscription_status = "canceled"
+        user.mp_preapproval_id = None
+        db.commit()
+        logger.info("Suscripcion cancelada para %s.", user.username)
     except Exception as e:
-        logger.error("Error creando portal session: %s", e)
-        raise HTTPException(500, "Error al abrir el portal de suscripcion.")
+        logger.error("Error cancelando suscripcion: %s", e)
+
+    return RedirectResponse("/app/pricing", status_code=303)
 
 
-# ============ Webhook de Stripe ============
+# ============ Webhook de Mercado Pago ============
 
-@router.post("/webhook/stripe")
-async def stripe_webhook(
+@router.post("/webhook/mercadopago")
+async def mercadopago_webhook(
     request: Request,
     db: Session = Depends(get_db),
 ):
-    """Procesa eventos de webhook de Stripe.
+    """Procesa eventos de webhook de Mercado Pago (IPN).
 
     Este endpoint NO debe estar protegido por autenticacion de usuario.
-    Stripe envia la firma en el header stripe-signature.
+    Mercado Pago envia notificaciones de pago y suscripcion.
     """
-    payload = await request.body()
-    sig_header = request.headers.get("stripe-signature", "")
+    body = await request.body()
+
+    # Mercado Pago envia el tipo de notificacion en query params o body
+    query_params = dict(request.query_params)
+    body_json = {}
+    try:
+        body_json = await request.json()
+    except Exception:
+        pass
+
+    topic = query_params.get("type") or body_json.get("type") or ""
+    data_id = query_params.get("data.id") or body_json.get("data", {}).get("id") or ""
+
+    logger.info("Mercado Pago webhook recibido: topic=%s, data_id=%s", topic, data_id)
 
     try:
-        event = stripe_service.handle_webhook(payload, sig_header)
+        if topic == "payment":
+            _handle_payment(data_id, db)
+        elif topic in ("subscription_preapproval", "subscription_authorized_payment"):
+            _handle_subscription(data_id, db)
+        elif topic == "merchant_order":
+            # Merchant order - opcional, se puede ignorar
+            pass
+        else:
+            # Intentar detectar por el body
+            action = body_json.get("action", "")
+            if "payment" in action:
+                _handle_payment(data_id, db)
+            elif "subscription" in action or "preapproval" in action:
+                _handle_subscription(data_id, db)
     except Exception as e:
-        logger.warning("Webhook invalido: %s", e)
-        raise HTTPException(400, "Webhook invalido.")
-
-    event_type = event["type"]
-    data = event["data"]["object"]
-    logger.info("Stripe webhook recibido: %s", event_type)
-
-    if event_type == "checkout.session.completed":
-        _handle_checkout_completed(data, db)
-    elif event_type == "customer.subscription.updated":
-        _handle_subscription_updated(data, db)
-    elif event_type == "customer.subscription.deleted":
-        _handle_subscription_deleted(data, db)
+        logger.error("Error procesando webhook de Mercado Pago: %s", e)
 
     return {"status": "ok"}
 
 
-def _handle_checkout_completed(session: dict, db: Session) -> None:
-    """Activa el plan Pro cuando el checkout se completa."""
-    user_id = session.get("metadata", {}).get("user_id")
-    if not user_id:
-        logger.warning("checkout.session.completed sin user_id en metadata")
+def _handle_payment(payment_id: str, db: Session) -> None:
+    """Procesa una notificacion de pago."""
+    if not payment_id:
         return
 
-    user = db.get(User, user_id)
+    from app.services.mercadopago_service import get_payment_info
+
+    try:
+        payment = get_payment_info(payment_id)
+    except Exception as e:
+        logger.error("Error obteniendo info de pago %s: %s", payment_id, e)
+        return
+
+    status = payment.get("status", "")
+    external_ref = payment.get("external_reference", "")
+
+    logger.info("Pago %s: status=%s, external_ref=%s", payment_id, status, external_ref)
+
+    if status == "approved" and external_ref:
+        user = db.get(User, external_ref)
+        if user:
+            user.plan = "pro"
+            user.subscription_status = "active"
+            db.commit()
+            logger.info("Usuario %s activado como Pro via pago %s.", user.username, payment_id)
+
+
+def _handle_subscription(preapproval_id: str, db: Session) -> None:
+    """Procesa una notificacion de suscripcion (preapproval)."""
+    if not preapproval_id:
+        return
+
+    from app.services.mercadopago_service import get_preapproval_info
+
+    try:
+        preapproval = get_preapproval_info(preapproval_id)
+    except Exception as e:
+        logger.error("Error obteniendo info de preapproval %s: %s", preapproval_id, e)
+        return
+
+    status = preapproval.get("status", "")
+    external_ref = preapproval.get("external_reference", "")
+
+    logger.info("Preapproval %s: status=%s, external_ref=%s", preapproval_id, status, external_ref)
+
+    if not external_ref:
+        return
+
+    user = db.get(User, external_ref)
     if not user:
-        logger.warning("Usuario %s no encontrado para checkout.session.completed", user_id)
+        logger.warning("Usuario %s no encontrado para preapproval %s", external_ref, preapproval_id)
         return
 
-    user.plan = "pro"
-    user.subscription_status = "active"
-    user.stripe_subscription_id = session.get("subscription")
-    db.commit()
-    logger.info("Usuario %s activado como Pro.", user.username)
-
-
-def _handle_subscription_updated(subscription: dict, db: Session) -> None:
-    """Actualiza el estado de la suscripcion cuando Stripe envia un update."""
-    customer_id = subscription.get("customer")
-    if not customer_id:
-        return
-
-    user = db.query(User).filter(User.stripe_customer_id == customer_id).first()
-    if not user:
-        logger.warning("No se encontro usuario con customer_id %s", customer_id)
-        return
-
-    status = subscription.get("status", "none")
-    user.subscription_status = status
-
-    if status == "active":
+    if status == "authorized":
         user.plan = "pro"
-    elif status in ("past_due", "canceled", "unpaid"):
+        user.subscription_status = "active"
+        user.mp_preapproval_id = preapproval_id
+    elif status in ("cancelled", "paused", "expired"):
         user.plan = "free"
-
-    # Guardar fecha de fin si existe
-    end_ts = subscription.get("current_period_end")
-    if end_ts:
-        from datetime import datetime, timezone
-        user.subscription_end_date = datetime.fromtimestamp(end_ts, tz=timezone.utc)
+        user.subscription_status = status
+        user.mp_preapproval_id = None
+    elif status == "pending":
+        user.subscription_status = "pending"
+        user.mp_preapproval_id = preapproval_id
 
     db.commit()
     logger.info("Suscripcion actualizada para %s: %s", user.username, status)
-
-
-def _handle_subscription_deleted(subscription: dict, db: Session) -> None:
-    """Revoca el plan Pro cuando la suscripcion se cancela/elimina."""
-    customer_id = subscription.get("customer")
-    if not customer_id:
-        return
-
-    user = db.query(User).filter(User.stripe_customer_id == customer_id).first()
-    if not user:
-        logger.warning("No se encontro usuario con customer_id %s", customer_id)
-        return
-
-    user.plan = "free"
-    user.subscription_status = "canceled"
-    db.commit()
-    logger.info("Suscripcion cancelada para %s. Plan revertido a free.", user.username)
