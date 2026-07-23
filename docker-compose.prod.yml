@@ -21,6 +21,8 @@ services:
       retries: 5
     ports:
       - "127.0.0.1:5432:5432"  # solo accesible localmente
+    networks:
+      - app-net
 
   # ── Redis ──
   redis:
@@ -33,6 +35,8 @@ services:
       retries: 5
     ports:
       - "127.0.0.1:6379:6379"
+    networks:
+      - app-net
 
   # ── Web (FastAPI) ──
   web:
@@ -40,6 +44,8 @@ services:
       context: .
       dockerfile: Dockerfile
     restart: unless-stopped
+    expose:
+      - "8000"
     env_file: .env
     environment:
       DATABASE_URL: postgresql://pdfuser:${DB_PASSWORD:-changeme}@db:5432/pdf_extractor
@@ -53,8 +59,11 @@ services:
       redis:
         condition: service_healthy
     command: >
-      sh -c "alembic upgrade head &&
-             uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2"
+      sh -c "mkdir -p /app/storage/uploads /app/storage/processed /app/storage/exports &&
+             alembic upgrade head &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1"
+    networks:
+      - app-net
 
   # ── Celery Worker ──
   worker:
@@ -75,6 +84,8 @@ services:
       redis:
         condition: service_healthy
     command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=2
+    networks:
+      - app-net
 
   # ── Celery Beat (cleanup periódico) ──
   beat:
@@ -93,6 +104,8 @@ services:
       redis:
         condition: service_healthy
     command: celery -A app.tasks.celery_app beat --loglevel=info
+    networks:
+      - app-net
 
   # ── Nginx (reverse proxy + SSL) ──
   nginx:
@@ -106,6 +119,12 @@ services:
       - /etc/letsencrypt:/etc/letsencrypt:ro  # SSL certs (certbot)
     depends_on:
       - web
+    networks:
+      - app-net
 
 volumes:
   pgdata:
+
+networks:
+  app-net:
+    driver: bridge

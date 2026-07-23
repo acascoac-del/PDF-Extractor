@@ -24,6 +24,7 @@ _KEYWORDS: dict[DocType, list[str]] = {
         "condición de iva", "punto de venta", "nro. factura", "n° de factura",
         "codigo autorizacion", "fecha de emision", "subtotal", "total",
         "importe", "gravado", "no gravado", "exento", "neto",
+        "telepase", "autopista", "peaje", "transacciones telepase",
     ],
     DocType.RECEIPT: [
         "remito", "remito nro", "destinatario", "remitente",

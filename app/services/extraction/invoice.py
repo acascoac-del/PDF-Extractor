@@ -15,13 +15,22 @@ from app.services.pdf_text import PdfContent
 def extract_invoice(content: PdfContent, llm_client=None, user=None) -> ExtractionResult:
     """Extrae campos de una factura argentina.
 
+    Si el documento es una factura de peaje/autopista (TelePase), delega al
+    extractor especializado ``extract_peaje``.
+
     Args:
         content: Texto y metadatos del PDF.
         llm_client: Cliente OpenAI ya creado (opcional).
         user: Usuario para crear cliente LLM desde sus settings (opcional).
     """
-    result = ExtractionResult()
     full_text = content.full_text
+
+    # --- Detectar factura de peaje/autopista y delegar ---
+    from app.services.extraction.peaje import is_peaje_invoice, extract_peaje
+    if is_peaje_invoice(full_text):
+        return extract_peaje(content, user=user)
+
+    result = ExtractionResult()
 
     # Si nos pasan user pero no llm_client, crear uno desde los settings del usuario
     if llm_client is None and user is not None:

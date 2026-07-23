@@ -11,7 +11,13 @@ def check_pdf_limit(user) -> tuple[bool, int, int]:
 
     Devuelve (puede_procesar, usados, limite).
     Resetea el contador si cambio el mes.
+    Admin siempre tiene acceso ilimitado.
     """
+    # Admin siempre ilimitado
+    from app.models.user import Role
+    if user.role == Role.ADMIN:
+        return True, 0, -1
+
     now = datetime.now(timezone.utc)
 
     # Resetear contador si cambio el mes
