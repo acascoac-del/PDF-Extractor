@@ -225,32 +225,50 @@ def _write_invoice(wb: Workbook, ext: Extraction) -> None:
     ws2 = wb.create_sheet("Resumen")
     ws2.sheet_properties.tabColor = "F59E0B"
 
-    summary_headers = [
-        "N° Factura", "Tipo", "Emisor", "CUIT Emisor", "Receptor", "CUIT Receptor",
-        "Fecha", "CAE", "Vto. CAE", "Incoterms", "SAP", "OC",
-        "Neto", "ICL", "IDC", "IVA Inscripto", "IVA %", "IVA Percepción",
-        "Ing. Brutos", "Tasa Vial", "TOTAL",
-    ]
-    _set_header(ws2, 1, summary_headers)
+    # Labels legibles para los campos (orden prioritario)
+    _LABELS = {
+        "invoice_number": "N° Factura", "invoice_letter": "Tipo",
+        "point_of_sale": "Punto de Venta",
+        "emitter_name": "Emisor", "emitter_cuit": "CUIT Emisor",
+        "emitter_address": "Dom. Emisor", "emitter_iibb": "IIBB Emisor",
+        "emitter_iva_condition": "IVA Emisor",
+        "receptor_name": "Receptor", "receptor_cuit": "CUIT Receptor",
+        "receptor_address": "Dom. Receptor", "receptor_iibb": "IIBB Receptor",
+        "receptor_account": "Cuenta", "receptor_deudor_account": "Cta. Deudora",
+        "business_name": "Razón Social", "cuit": "CUIT",
+        "iva_condition": "Condición IVA",
+        "emission_date": "Fecha Emisión", "cae": "CAE",
+        "invoice_cae": "CAE (pie)", "cae_expiry": "Vto. CAE",
+        "invoice_type": "Tipo Factura",
+        "incoterms": "Incoterms", "sap_number": "N° SAP",
+        "oc_number": "OC", "payment_terms": "Condiciones de Pago",
+        "shipping_method": "Forma de Envío",
+        "road_company": "Empresa Vial", "road_cuit": "CUIT Vial",
+        "period_start": "Período Desde", "period_end": "Período Hasta",
+        "first_due_date": "1er Vto.", "first_due_amount": "1er Vto. $",
+        "second_due_date": "2do Vto.", "second_due_amount": "2do Vto. $",
+        "payment_method": "Medio de Pago", "client_code": "Cod. Cliente",
+        "subtotal": "Subtotal", "importe_neto": "Importe Neto",
+        "financiacion": "Financiación", "icl_amount": "ICL",
+        "idc_amount": "IDC",
+        "iva_inscripto": "IVA Inscripto", "iva_no_inscripto": "IVA No Insc.",
+        "iva_percepcion": "IVA Percepción", "iva_percentage": "% IVA",
+        "ingresos_brutos": "Ing. Brutos", "tasa_vial": "Tasa Vial",
+        "net": "Neto Gravado", "iva_amount": "IVA",
+        "total": "TOTAL",
+    }
 
-    row_data = [
-        _f(fields, "invoice_number"), _f(fields, "invoice_letter"),
-        _f(fields, "emitter_name"), _f(fields, "emitter_cuit"),
-        _f(fields, "receptor_name"), _f(fields, "receptor_cuit"),
-        _f(fields, "emission_date"), _f(fields, "cae"),
-        _f(fields, "cae_expiry"), _f(fields, "incoterms"),
-        _f(fields, "sap_number"), _f(fields, "oc_number"),
-        _f(fields, "importe_neto"), _f(fields, "icl_amount"),
-        _f(fields, "idc_amount"), _f(fields, "iva_inscripto"),
-        _f(fields, "iva_percentage"), _f(fields, "iva_percepcion"),
-        _f(fields, "ingresos_brutos"), _f(fields, "tasa_vial"),
-        _f(fields, "total"),
-    ]
-    for col, val in enumerate(row_data, 1):
+    # Agregar todos los campos que tengan valor (ordenados por _LABELS primero, luego alfabético)
+    present_keys = [k for k in fields if fields[k].get("value") is not None and fields[k]["value"] != ""]
+    ordered = [k for k in _LABELS if k in present_keys]
+    ordered += sorted(k for k in present_keys if k not in ordered)
+    headers = [_LABELS.get(k, k) for k in ordered]
+    _set_header(ws2, 1, headers)
+    for col, key in enumerate(ordered, 1):
+        val = fields[key].get("value")
         ws2.cell(row=2, column=col, value=val).border = _thin_border()
-
-    for i in range(1, len(summary_headers) + 1):
-        ws2.column_dimensions[get_column_letter(i)].width = 18
+    for i in range(1, len(headers) + 1):
+        ws2.column_dimensions[get_column_letter(i)].width = 20
 
 
 # ── Tablas ───────────────────────────────────────────────────────────────
