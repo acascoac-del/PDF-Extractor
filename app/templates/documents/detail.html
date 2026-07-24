@@ -103,7 +103,11 @@
         <div class="flex items-center justify-between mb-3">
           <h2 class="font-semibold text-slate-900">Datos extraídos</h2>
           <div class="flex items-center gap-2">
-            {% if extraction.llm_model %}
+            {% if extraction.llm_primary %}
+            <span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-700">
+              Extracción completa por IA: {{ extraction.llm_model or 'LLM' }}
+            </span>
+            {% elif extraction.llm_model %}
             <span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-700">
               Extracción asistida por IA: {{ extraction.llm_model }}
             </span>

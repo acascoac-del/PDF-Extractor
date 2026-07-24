@@ -123,6 +123,7 @@ def run_pipeline_sync(doc: Document, pdf_path_or_bytes: Path | str | bytes, db: 
             data=result.data,
             overall_confidence=compute_overall_confidence(result.data),
             llm_model=getattr(result, "llm_model", None),
+            llm_primary=getattr(result, "llm_primary", False),
         )
         db.add(extraction)
         doc.status = DocStatus.EXTRACTED

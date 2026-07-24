@@ -54,6 +54,7 @@ def _serialize_extraction(extraction: Extraction) -> dict:
         "data": extraction.data,
         "overall_confidence": extraction.overall_confidence,
         "llm_model": extraction.llm_model,
+        "llm_primary": getattr(extraction, "llm_primary", False),
         "created_at": extraction.created_at.isoformat() if extraction.created_at else None,
         "updated_at": extraction.updated_at.isoformat() if extraction.updated_at else None,
     }

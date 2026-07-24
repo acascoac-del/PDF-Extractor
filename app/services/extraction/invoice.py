@@ -2,14 +2,22 @@
 
 Motor híbrido: regex para campos fijos (CUIT, CAE, fechas, montos) + LLM para
 campos variables (descripción de ítems, forma de pago, etc.).
+
+Cuando la extracción por reglas tiene baja calidad (pocos campos o baja
+confianza), el LLM pasa a ser el extractor PRIMARIO en lugar de solo
+complementar los campos faltantes.
 """
 from __future__ import annotations
 
+import json
+import logging
 import re
 from typing import Any
 
 from app.services.extraction.base import ExtractionResult
 from app.services.pdf_text import PdfContent
+
+logger = logging.getLogger(__name__)
 
 
 def extract_invoice(content: PdfContent, llm_client=None, user=None) -> ExtractionResult:
@@ -361,10 +369,50 @@ def extract_invoice(content: PdfContent, llm_client=None, user=None) -> Extracti
     result.set_meta("page_count", content.page_count)
     result.set_meta("is_scanned", content.is_scanned)
 
-    # --- LLM enrichment si hay cliente configurado ---
-    if llm_client is not None:
+    # --- Evaluar calidad de la extracción por reglas ---
+    fields = result.data.get("fields", {})
+    non_null_fields = sum(
+        1 for v in fields.values()
+        if v.get("value") is not None and v["value"] != ""
+    )
+    avg_confidence = (
+        sum(v.get("confidence", 0) for v in fields.values() if v.get("value") is not None)
+        / max(non_null_fields, 1)
+    )
+    quality_low = non_null_fields < 5 or avg_confidence < 0.5
+
+    logger.info(
+        "Extraction quality: %d fields, avg_confidence=%.2f, quality_low=%s",
+        non_null_fields, avg_confidence, quality_low,
+    )
+
+    # --- LLM: primario (baja calidad) o enriquecimiento (alta calidad) ---
+    if quality_low and (llm_client or user):
+        # Resolver cliente LLM si hace falta
+        if llm_client is None and user is not None:
+            from app.services.llm import get_client
+            llm_client = get_client(user)
+        if llm_client is not None:
+            try:
+                llm_model_name = getattr(llm_client, "model", None)
+                llm_data = _llm_primary_extract(full_text, llm_client, user=user)
+                if llm_data:
+                    _merge_llm_primary(result, llm_data, llm_model=llm_model_name)
+                    result.llm_primary = True
+                    logger.info("LLM primary extraction applied successfully")
+                else:
+                    logger.warning("LLM primary extraction returned no data, falling back to enrichment")
+                    _enrich_with_llm(result, full_text, llm_client, user=user)
+            except Exception:
+                logger.exception("LLM primary extraction failed, falling back to enrichment")
+                try:
+                    _enrich_with_llm(result, full_text, llm_client, user=user)
+                except Exception:
+                    pass
+    elif llm_client or user:
+        # Comportamiento actual: reglas primarias, LLM llena gaps
         try:
-            _enrich_with_llm(result, full_text, llm_client)
+            _enrich_with_llm(result, full_text, llm_client, user=user)
         except Exception:
             pass  # El LLM es opcional; si falla, nos quedamos con las reglas.
 
@@ -1010,9 +1058,145 @@ def _extract_items_from_text(content: PdfContent) -> list[dict[str, Any]]:
     return items
 
 
-def _enrich_with_llm(result: ExtractionResult, text: str, llm_client) -> None:
-    """Usa el LLM para enriquecer/corregir campos que las reglas no encontraron."""
-    from app.services.llm import extract_invoice_with_llm
+def _llm_primary_extract(text: str, llm_client, user=None) -> dict | None:
+    """Usa el LLM como extractor primario: extrae TODOS los campos de la factura.
+
+    Devuelve un dict con todas las claves posibles (null si no encontró el valor)
+    o None si la llamada falla.
+    """
+    from app.services.llm import _get_model_and_temperature
+
+    model, _ = _get_model_and_temperature(user)
+
+    system_prompt = """
+Sos un extractor de facturas argentinas. Analizá el texto y extraé TODOS los campos posibles.
+Devolvé UN SOLO JSON con las siguientes claves (null si no encontrás el valor):
+
+Campos del emisor:
+- emitter_name, emitter_cuit, emitter_address, emitter_iibb, emitter_iva_condition, emitter_start_date
+
+Campos del receptor:
+- receptor_name, receptor_cuit, receptor_address, receptor_iibb, receptor_account, receptor_deudor_account
+
+Campos de la factura:
+- invoice_number, invoice_letter (A/B/C), point_of_sale, emission_date, cae, invoice_cae, cae_expiry
+- invoice_type, incoterms, sap_number, oc_number, payment_terms, shipping_method
+
+Campos de peaje/autopista (si aplica):
+- road_company, period_start, period_end, first_due_date, first_due_amount
+- second_due_date, second_due_amount, payment_method, client_code
+
+Totales:
+- subtotal, importe_neto, financiacion, icl_amount, idc_amount
+- iva_inscripto, iva_no_inscripto, iva_percepcion, iva_percentage
+- ingresos_brutos, tasa_vial, net, iva_amount, total
+
+Items (array de objetos, cada uno con):
+- code, description, quantity, unit, risk_un, unit_price, import (o subtotal)
+- Si hay modificadores (ICL, B%, E%), incluirlos como string en un campo "modifiers_text"
+
+Para montos: usar punto como separador decimal y nada para miles (ej: 1234567.89)
+Para fechas: formato DD/MM/YYYY
+
+SOLO el JSON, sin markdown ni explicaciones.
+"""
+    try:
+        resp = llm_client.chat.completions.create(
+            model=model,
+            temperature=0.0,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": text[:12000]},
+            ],
+        )
+        content = resp.choices[0].message.content
+        if not content:
+            return None
+        content = content.strip()
+        # Limpiar fences de markdown
+        if content.startswith("```"):
+            content = content.split("\n", 1)[-1]
+        if content.endswith("```"):
+            content = content.rsplit("```", 1)[0]
+        return json.loads(content.strip())
+    except Exception as e:
+        logger.warning("LLM primary extraction failed: %s", e)
+        return None
+
+
+def _merge_llm_primary(
+    result: ExtractionResult,
+    llm_data: dict,
+    llm_model: str | None = None,
+) -> None:
+    """Combina resultado LLM (base) con reglas (override para alta confianza).
+
+    - Los campos del LLM se usan como base.
+    - Las reglas con confianza >= 0.8 sobreescriben el LLM (patrones conocidos
+      son más confiables).
+    - Los ítems del LLM se usan solo si las reglas no encontraron ninguno.
+    """
+    fields = result.data.get("fields", {})
+
+    for key, value in llm_data.items():
+        if key == "items":
+            continue
+        if value is None or value == "":
+            continue
+
+        existing = fields.get(key, {})
+        existing_val = existing.get("value")
+        existing_conf = existing.get("confidence", 0)
+
+        # Si las reglas encontraron esto con alta confianza, mantener reglas
+        if existing_val is not None and existing_conf >= 0.8:
+            continue
+
+        # Si las reglas no encontraron nada o la confianza es baja → usar LLM
+        fields[key] = {
+            "value": value,
+            "source": "llm",
+            "confidence": 0.75,
+            "raw": value,
+        }
+
+    result.data["fields"] = fields
+
+    # Manejar items del LLM
+    llm_items = llm_data.get("items", [])
+    rule_items = result.data.get("items", [])
+    if llm_items and not rule_items:
+        # Solo usar items del LLM si las reglas no encontraron ninguno
+        parsed_items = []
+        for item in llm_items:
+            parsed_items.append({
+                "code": item.get("code", ""),
+                "description": item.get("description", ""),
+                "quantity": _parse_amount(str(item.get("quantity", 0))),
+                "unit": item.get("unit", ""),
+                "risk_un": str(item.get("risk_un", "")),
+                "unit_price": _parse_amount(str(item.get("unit_price", 0))),
+                "import": _parse_amount(str(item.get("import", item.get("subtotal", 0)))),
+                "source": "llm",
+                "confidence": 0.70,
+            })
+        result.data["items"] = parsed_items
+
+    result.llm_model = llm_model
+
+
+def _enrich_with_llm(result: ExtractionResult, text: str, llm_client=None, user=None) -> None:
+    """Usa el LLM para enriquecer/corregir campos que las reglas no encontraron.
+
+    Si no se pasa *llm_client* pero sí *user*, se crea un cliente desde los
+    settings del usuario.
+    """
+    from app.services.llm import extract_invoice_with_llm, get_client
+
+    if llm_client is None and user is not None:
+        llm_client = get_client(user)
+    if llm_client is None:
+        return
 
     llm_data = extract_invoice_with_llm(text, llm_client)
     if not llm_data:

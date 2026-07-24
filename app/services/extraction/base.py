@@ -9,6 +9,7 @@ from typing import Any
 class ExtractionResult:
     data: dict[str, Any] = field(default_factory=dict)
     llm_model: str | None = None
+    llm_primary: bool = False  # True when LLM was the primary extractor (not just enrichment)
 
     def set_field(self, key: str, value: Any, source: str, confidence: float, raw: Any = None) -> None:
         """Helper para poblar el dict data con metadata de confianza."""
