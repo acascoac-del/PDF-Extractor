@@ -379,7 +379,13 @@ def extract_invoice(content: PdfContent, llm_client=None, user=None) -> Extracti
         sum(v.get("confidence", 0) for v in fields.values() if v.get("value") is not None)
         / max(non_null_fields, 1)
     )
-    quality_low = non_null_fields < 5 or avg_confidence < 0.5
+    items_found = len(result.data.get("items", []))
+    # Baja calidad si: pocos campos, baja confianza, O no se encontraron items
+    items_found = len(result.data.get("items", []))
+    # Baja calidad si: pocos campos, baja confianza, O no se encontraron items
+    items_found = len(result.data.get("items", []))
+    # Baja calidad si: pocos campos, baja confianza, O no se encontraron items
+    quality_low = non_null_fields < 5 or avg_confidence < 0.5 or items_found == 0 or items_found == 0 or items_found == 0
 
     logger.info(
         "Extraction quality: %d fields, avg_confidence=%.2f, quality_low=%s",
