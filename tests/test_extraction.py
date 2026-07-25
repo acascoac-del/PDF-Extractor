@@ -76,3 +76,90 @@ class TestInvoiceExtraction:
             assert "source" in field, f"Field {key} missing source"
             assert "confidence" in field, f"Field {key} missing confidence"
             assert "value" in field, f"Field {key} missing value"
+
+
+class TestItemValidationAndAIFallback:
+    """Pruebas de filtrado de ítems y fallback a IA cuando faltan ítems."""
+
+    def test_is_valid_item(self):
+        from app.services.extraction.invoice import _is_valid_item
+
+        # Ítems válidos
+        assert _is_valid_item({"description": "Nafta Super XXI", "quantity": 10, "unit_price": 1000, "subtotal": 10000})
+        assert _is_valid_item({"description": "Aceite Sintetico 1L", "subtotal": 5500.5})
+
+        # No ítems (encabezados, resumen impositivo, CUIT)
+        assert not _is_valid_item({"description": "Subtotal", "subtotal": 10000})
+        assert not _is_valid_item({"description": "IVA 21%", "quantity": 21, "subtotal": 2100})
+        assert not _is_valid_item({"description": "Descripción", "quantity": 0})
+        assert not _is_valid_item({"description": "CUIT: 30-12345678-9"})
+        assert not _is_valid_item({"description": "Total", "import": 12100})
+
+    def test_unknown_invoice_no_items_triggers_ai(self):
+        """Factura desconocida (Axion) con CUIT/CAE/Fecha por reglas pero sin ítems -> IA completa."""
+        from unittest.mock import MagicMock
+        import json
+        from app.services.pdf_text import PdfContent
+
+        text = """
+        AXION ENERGY ARGENTINA S.A.
+        FACTURA 0005-00012345
+        A ORIGINAL
+        CUIT: 30-67890123-4
+        Fecha: 20/07/2026
+        Condición ante IVA: Responsable Inscripto
+        SRES. Cliente Ejemplo SRL
+        CUIT: 30-71234567-9
+        CAE: 76123456789012
+        Vencimiento CAE: 30/07/2026
+        TOTAL: 50000.00
+        """
+        content = PdfContent(full_text=text, page_count=1, is_scanned=False, tables=[])
+
+        mock_llm = MagicMock()
+        mock_response = MagicMock()
+        mock_response.choices = [
+            MagicMock(
+                message=MagicMock(
+                    content=json.dumps({
+                        "emitter_name": "AXION ENERGY ARGENTINA S.A.",
+                        "emitter_cuit": "30-67890123-4",
+                        "receptor_cuit": "30-71234567-9",
+                        "invoice_number": "0005-00012345",
+                        "cae": "76123456789012",
+                        "total": 50000.0,
+                        "items": [
+                            {
+                                "code": "AX-01",
+                                "description": "Combustible Axion Super",
+                                "quantity": 40.0,
+                                "unit": "L",
+                                "unit_price": 1250.0,
+                                "import": 50000.0,
+                            }
+                        ]
+                    })
+                )
+            )
+        ]
+        mock_llm.chat.completions.create.return_value = mock_response
+        mock_llm.model = "gpt-4o-mini"
+
+        result = extract_invoice(content, llm_client=mock_llm)
+
+        # Debe marcarse como extracción completa por IA
+        assert result.llm_primary is True
+        assert result.llm_model == "gpt-4o-mini"
+
+        # Debe conservar encabezados de reglas de alta confianza
+        fields = result.data.get("fields", {})
+        assert fields["cuit"]["value"] == "30-67890123-4"
+        assert fields["cae"]["value"] == "76123456789012"
+
+        # Debe incluir los ítems extraídos por el LLM
+        items = result.data.get("items", [])
+        assert len(items) == 1
+        assert items[0]["description"] == "Combustible Axion Super"
+        assert items[0]["import"] == 50000.0
+        assert items[0]["source"] == "llm"
+

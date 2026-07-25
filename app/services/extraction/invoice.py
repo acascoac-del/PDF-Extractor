@@ -379,43 +379,46 @@ def extract_invoice(content: PdfContent, llm_client=None, user=None) -> Extracti
         sum(v.get("confidence", 0) for v in fields.values() if v.get("value") is not None)
         / max(non_null_fields, 1)
     )
-    items_found = len(result.data.get("items", []))
-    # Baja calidad si: pocos campos, baja confianza, O no se encontraron items
-    items_found = len(result.data.get("items", []))
-    # Baja calidad si: pocos campos, baja confianza, O no se encontraron items
-    items_found = len(result.data.get("items", []))
-    # Baja calidad si: pocos campos, baja confianza, O no se encontraron items
-    quality_low = non_null_fields < 5 or avg_confidence < 0.5 or items_found == 0 or items_found == 0 or items_found == 0
+    raw_items = result.data.get("items", [])
+    valid_items = [it for it in raw_items if _is_valid_item(it)]
+    result.data["items"] = valid_items
+    items_found = len(valid_items)
+
+    # Baja calidad si: pocos campos, baja confianza, O no se encontraron items válidos
+    quality_low = non_null_fields < 5 or avg_confidence < 0.5 or items_found == 0
 
     logger.info(
-        "Extraction quality: %d fields, avg_confidence=%.2f, quality_low=%s",
-        non_null_fields, avg_confidence, quality_low,
+        "Extraction quality: %d fields, avg_confidence=%.2f, items_found=%d, quality_low=%s",
+        non_null_fields, avg_confidence, items_found, quality_low,
     )
 
-    # --- LLM: primario (baja calidad) o enriquecimiento (alta calidad) ---
-    if quality_low and (llm_client or user):
-        # Resolver cliente LLM si hace falta
-        if llm_client is None and user is not None:
+    # Si nos pasan user pero no llm_client, crear uno desde los settings del usuario o globales
+    if llm_client is None:
+        try:
             from app.services.llm import get_client
             llm_client = get_client(user)
-        if llm_client is not None:
+        except ImportError:
+            llm_client = None
+
+    # --- LLM: primario (baja calidad) o enriquecimiento (alta calidad) ---
+    if quality_low and llm_client is not None:
+        try:
+            llm_model_name = getattr(llm_client, "model", None)
+            llm_data = _llm_primary_extract(full_text, llm_client, user=user)
+            if llm_data:
+                _merge_llm_primary(result, llm_data, llm_model=llm_model_name)
+                result.llm_primary = True
+                logger.info("LLM primary extraction applied successfully")
+            else:
+                logger.warning("LLM primary extraction returned no data, falling back to enrichment")
+                _enrich_with_llm(result, full_text, llm_client, user=user)
+        except Exception:
+            logger.exception("LLM primary extraction failed, falling back to enrichment")
             try:
-                llm_model_name = getattr(llm_client, "model", None)
-                llm_data = _llm_primary_extract(full_text, llm_client, user=user)
-                if llm_data:
-                    _merge_llm_primary(result, llm_data, llm_model=llm_model_name)
-                    result.llm_primary = True
-                    logger.info("LLM primary extraction applied successfully")
-                else:
-                    logger.warning("LLM primary extraction returned no data, falling back to enrichment")
-                    _enrich_with_llm(result, full_text, llm_client, user=user)
+                _enrich_with_llm(result, full_text, llm_client, user=user)
             except Exception:
-                logger.exception("LLM primary extraction failed, falling back to enrichment")
-                try:
-                    _enrich_with_llm(result, full_text, llm_client, user=user)
-                except Exception:
-                    pass
-    elif llm_client or user:
+                pass
+    elif llm_client is not None:
         # Comportamiento actual: reglas primarias, LLM llena gaps
         try:
             _enrich_with_llm(result, full_text, llm_client, user=user)
@@ -915,6 +918,53 @@ def _extract_risk_descriptions(text: str) -> list[dict[str, str]]:
     return entries
 
 
+_NON_ITEM_PHRASES = {
+    "subtotal", "total", "importe total", "neto", "neto gravado", "importe neto",
+    "financiacion", "financiación", "iva", "iva 21%", "iva 10.5%", "iva 27%",
+    "iva inscripto", "iva no inscripto", "iva percepcion", "iva percepción",
+    "ingresos brutos", "iibb", "percepcion", "percepción", "retencion", "retención",
+    "cuit", "cae", "vencimiento", "fecha", "comprobante", "factura", "punto de venta",
+    "tasa vial", "icl", "idc", "bonificacion", "bonificación", "recargo",
+    "descripción", "descripcion", "cantidad", "cant.", "precio", "p.u.", "pu",
+    "unitario", "precio unitario", "importe", "código", "codigo", "detalle",
+    "concepto", "item", "línea", "linea", "totales", "resumen", "observaciones",
+    "condicion de iva", "condición de iva", "razon social", "razón social",
+}
+
+
+def _is_valid_item(item: dict[str, Any]) -> bool:
+    """Verifica si un dict representa un ítem de línea válido y no un encabezado/resumen."""
+    if not isinstance(item, dict):
+        return False
+
+    raw_desc = item.get("description") or item.get("descripcion") or item.get("concepto") or ""
+    desc = str(raw_desc).strip()
+    if not desc or len(desc) < 2:
+        return False
+
+    desc_lower = desc.lower()
+    if desc_lower in _NON_ITEM_PHRASES:
+        return False
+
+    words = [w for w in re.split(r"\s+", desc_lower) if w]
+    if words and all(w in _NON_ITEM_PHRASES for w in words):
+        return False
+
+    has_numeric = False
+    for k in ("quantity", "unit_price", "subtotal", "import", "cantidad", "precio_unitario", "importe"):
+        val = item.get(k)
+        if val is not None:
+            try:
+                num = float(str(val).replace(".", "").replace(",", ".")) if isinstance(val, str) else float(val)
+                if num > 0:
+                    has_numeric = True
+                    break
+            except (ValueError, TypeError):
+                pass
+
+    return has_numeric
+
+
 def _extract_items(content: PdfContent) -> list[dict[str, Any]]:
     """Extrae items: primero intenta tablas, luego texto libre como fallback."""
     # 1) Intentar extracción desde tablas (pdfplumber)
@@ -924,7 +974,7 @@ def _extract_items(content: PdfContent) -> list[dict[str, Any]]:
     if not items:
         items = _extract_items_from_text(content)
 
-    return items
+    return [it for it in items if _is_valid_item(it)]
 
 
 def _extract_items_from_tables(content: PdfContent) -> list[dict[str, Any]]:
@@ -970,7 +1020,8 @@ def _extract_items_from_tables(content: PdfContent) -> list[dict[str, Any]]:
             if any(v for k, v in item.items() if k != "description" and v is not None):
                 item["source"] = "table"
                 item["confidence"] = 0.60
-                items.append(item)
+                if _is_valid_item(item):
+                    items.append(item)
 
     return items
 
@@ -1070,9 +1121,11 @@ def _llm_primary_extract(text: str, llm_client, user=None) -> dict | None:
     Devuelve un dict con todas las claves posibles (null si no encontró el valor)
     o None si la llamada falla.
     """
-    from app.services.llm import _get_model_and_temperature
-
-    model, _ = _get_model_and_temperature(user)
+    try:
+        from app.services.llm import _get_model_and_temperature
+        model, _ = _get_model_and_temperature(user)
+    except ImportError:
+        model = getattr(llm_client, "model", None) or "gpt-4o-mini"
 
     system_prompt = """
 Sos un extractor de facturas argentinas. Analizá el texto y extraé TODOS los campos posibles.
@@ -1170,23 +1223,27 @@ def _merge_llm_primary(
 
     # Manejar items del LLM
     llm_items = llm_data.get("items", [])
-    rule_items = result.data.get("items", [])
+    rule_items = [i for i in result.data.get("items", []) if _is_valid_item(i)]
     if llm_items and not rule_items:
-        # Solo usar items del LLM si las reglas no encontraron ninguno
+        # Solo usar items del LLM si las reglas no encontraron ninguno válido
         parsed_items = []
         for item in llm_items:
+            if not isinstance(item, dict):
+                continue
             parsed_items.append({
-                "code": item.get("code", ""),
-                "description": item.get("description", ""),
-                "quantity": _parse_amount(str(item.get("quantity", 0))),
-                "unit": item.get("unit", ""),
-                "risk_un": str(item.get("risk_un", "")),
-                "unit_price": _parse_amount(str(item.get("unit_price", 0))),
-                "import": _parse_amount(str(item.get("import", item.get("subtotal", 0)))),
+                "code": str(item.get("code", "") or ""),
+                "description": str(item.get("description", "") or ""),
+                "quantity": _parse_amount(str(item.get("quantity", 0))) if item.get("quantity") is not None else None,
+                "unit": str(item.get("unit", "") or ""),
+                "risk_un": str(item.get("risk_un", "") or ""),
+                "unit_price": _parse_amount(str(item.get("unit_price", 0))) if item.get("unit_price") is not None else None,
+                "import": _parse_amount(str(item.get("import", item.get("subtotal", 0)))) if (item.get("import") is not None or item.get("subtotal") is not None) else None,
                 "source": "llm",
                 "confidence": 0.70,
             })
-        result.data["items"] = parsed_items
+        valid_llm_items = [it for it in parsed_items if _is_valid_item(it)]
+        if valid_llm_items:
+            result.data["items"] = valid_llm_items
 
     result.llm_model = llm_model
 
@@ -1197,10 +1254,12 @@ def _enrich_with_llm(result: ExtractionResult, text: str, llm_client=None, user=
     Si no se pasa *llm_client* pero sí *user*, se crea un cliente desde los
     settings del usuario.
     """
-    from app.services.llm import extract_invoice_with_llm, get_client
-
-    if llm_client is None and user is not None:
-        llm_client = get_client(user)
+    try:
+        from app.services.llm import extract_invoice_with_llm, get_client
+        if llm_client is None:
+            llm_client = get_client(user)
+    except ImportError:
+        return
     if llm_client is None:
         return
 
@@ -1210,6 +1269,8 @@ def _enrich_with_llm(result: ExtractionResult, text: str, llm_client=None, user=
 
     fields = result.data.get("fields", {})
     for key, value in llm_data.items():
+        if key == "items":
+            continue
         if key in fields and fields[key]["value"] is None and value is not None:
             fields[key] = {
                 "value": value,
@@ -1218,4 +1279,28 @@ def _enrich_with_llm(result: ExtractionResult, text: str, llm_client=None, user=
                 "raw": value,
             }
     result.data["fields"] = fields
+
+    # Manejar items del LLM si las reglas no tenían ningún item válido
+    llm_items = llm_data.get("items", [])
+    rule_items = [i for i in result.data.get("items", []) if _is_valid_item(i)]
+    if llm_items and not rule_items:
+        parsed_items = []
+        for item in llm_items:
+            if not isinstance(item, dict):
+                continue
+            parsed_items.append({
+                "code": str(item.get("code", "") or ""),
+                "description": str(item.get("description", "") or ""),
+                "quantity": _parse_amount(str(item.get("quantity", 0))) if item.get("quantity") is not None else None,
+                "unit": str(item.get("unit", "") or ""),
+                "risk_un": str(item.get("risk_un", "") or ""),
+                "unit_price": _parse_amount(str(item.get("unit_price", 0))) if item.get("unit_price") is not None else None,
+                "import": _parse_amount(str(item.get("import", item.get("subtotal", 0)))) if (item.get("import") is not None or item.get("subtotal") is not None) else None,
+                "source": "llm",
+                "confidence": 0.70,
+            })
+        valid_llm_items = [it for it in parsed_items if _is_valid_item(it)]
+        if valid_llm_items:
+            result.data["items"] = valid_llm_items
+
     result.llm_model = getattr(llm_client, "model", None)
