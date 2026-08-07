@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.deps import get_db, get_current_user_optional, require_user
 from app.models.user import User
-from app.services.limits import check_pdf_limit, FREE_PDF_LIMIT
+from app.services.limits import check_pdf_limit, FREE_PDF_LIMIT, TRIAL_PDF_LIMIT, _get_limit_for_user
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +30,9 @@ templates = Jinja2Templates(directory="app/templates")
 def pricing_page(
     request: Request,
     limit: int = 0,
+    paypal_success: int = 0,
+    cancelled: int = 0,
+    pending: int = 0,
     user: User | None = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ):
@@ -42,6 +45,9 @@ def pricing_page(
         can_process, used, _limit = check_pdf_limit(user)
         db.commit()  # guardar posible reset de contador
         plan = user.plan
+        user_limit = _get_limit_for_user(user)
+    else:
+        user_limit = TRIAL_PDF_LIMIT
 
     return templates.TemplateResponse(
         "pricing.html",
@@ -50,9 +56,15 @@ def pricing_page(
             "user": user,
             "plan": plan,
             "used": used,
-            "free_limit": FREE_PDF_LIMIT,
+            "free_limit": user_limit,
             "limit_reached": limit == 1,
             "mp_public_key": mp_public_key,
+            "mp_monthly_price": settings.mp_monthly_price,
+            "paypal_monthly_price": settings.paypal_monthly_price,
+            "paypal_enabled": settings.paypal_enabled,
+            "paypal_success": paypal_success == 1,
+            "cancelled": cancelled == 1,
+            "pending": pending == 1,
         },
     )
 
@@ -92,6 +104,69 @@ def subscribe(
     except Exception as e:
         logger.error("Error creando preferencia de Mercado Pago: %s", e)
         raise HTTPException(500, "Error al crear la sesion de pago.")
+
+
+@router.post("/app/subscribe/paypal")
+def subscribe_paypal(
+    request: Request,
+    user: User = Depends(require_user),
+):
+    """Crea una suscripcion PayPal y redirige a la aprobacion del comprador."""
+    if user.plan == "pro":
+        return RedirectResponse("/app/pricing", status_code=303)
+
+    from app.services.paypal_service import approval_url, create_subscription
+
+    base_url = str(request.base_url).rstrip("/")
+    try:
+        subscription = create_subscription(
+            user,
+            f"{base_url}/app/subscribe/paypal/return",
+            f"{base_url}/app/pricing?cancelled=1",
+        )
+        checkout_url = approval_url(subscription)
+        if not checkout_url:
+            raise RuntimeError("PayPal no devolvio el enlace de aprobacion.")
+        return RedirectResponse(checkout_url, status_code=303)
+    except Exception as e:
+        logger.error("Error creando suscripcion de PayPal: %s", e)
+        raise HTTPException(503, "PayPal no esta disponible. Verifica su configuracion.")
+
+
+@router.get("/app/subscribe/paypal/return")
+def paypal_return(
+    subscription_id: str | None = None,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """Verifica en PayPal la suscripcion aprobada antes de activar el plan."""
+    if not subscription_id:
+        return RedirectResponse("/app/pricing?cancelled=1", status_code=303)
+
+    try:
+        from app.services.paypal_service import get_subscription
+
+        subscription = get_subscription(subscription_id)
+        if subscription.get("custom_id") != str(user.id):
+            raise HTTPException(403, "La suscripcion de PayPal no corresponde al usuario.")
+
+        status = subscription.get("status", "")
+        if status in ("APPROVED", "ACTIVE"):
+            user.plan = "pro"
+            user.subscription_status = "active"
+            user.settings = {
+                **(user.settings or {}),
+                "paypal_subscription_id": subscription_id,
+            }
+            db.commit()
+            return RedirectResponse("/app/pricing?paypal_success=1", status_code=303)
+
+        return RedirectResponse("/app/pricing?pending=1", status_code=303)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Error verificando suscripcion PayPal: %s", e)
+        raise HTTPException(503, "No se pudo verificar el pago de PayPal.")
 
 
 # ============ Exito / Cancelacion / Pendiente ============

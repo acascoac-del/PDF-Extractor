@@ -1,0 +1,81 @@
+# =========================================================
+#  PDF Extractor — Render Blueprint (todo-en-uno, gratis)
+#
+#  Despliegue automático:
+#    1. Ir a render.com → New → Blueprint
+#    2. Conectar repo de GitHub
+#    3. Render crea: Web Service + PostgreSQL
+#    4. Configurar variables de entorno faltantes
+# =========================================================
+
+databases:
+  # ── PostgreSQL (reemplaza Neon.tech) ──
+  - name: pdf-extractor-db
+    plan: free                    # gratis: 90 días de datos, 1GB
+    databaseName: pdf_extractor
+    user: pdfuser
+    # NoSQL: false (es PostgreSQL)
+    # El DATABASE_URL se inyecta automáticamente como DATABASE_URL
+
+services:
+  # ── Web Service (FastAPI) ──
+  - type: web
+    name: pdf-extractor
+    runtime: python
+    plan: free                    # gratis: 512MB RAM, duerme después de 15min
+    buildCommand: bash build.sh
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1
+    healthCheckPath: /health
+    autoDeploy: true              # deploy automático al hacer push
+
+    # Variables de entorno (las que NO vienen del Blueprint)
+    envVars:
+      # DATABASE_URL se inyecta automáticamente desde el database
+      - key: SECRET_KEY
+        generateValue: true       # Render genera una clave aleatoria
+      - key: ENVIRONMENT
+        value: production
+      - key: APP_URL
+        fromService:
+          name: pdf-extractor
+          type: web
+          property: host          # https://pdf-extractor.onrender.com
+
+      # ── Cloudflare R2 (storage para PDFs) ──
+      # Configurar manualmente en Render Dashboard
+      - key: R2_ENDPOINT_URL
+        sync: false               # https://xxx.r2.cloudflarestorage.com
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_BUCKET_NAME
+        value: pdf-extractor
+      - key: R2_PUBLIC_URL
+        sync: false               # https://pub-xxx.r2.dev (opcional)
+
+      # ── OpenAI (para extracción IA + OCR) ──
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_BASE_URL
+        value: https://api.openai.com/v1
+      - key: LLM_MODEL
+        value: gpt-4o-mini
+
+      # ── Admin inicial ──
+      - key: INITIAL_ADMIN_EMAIL
+        sync: false
+      - key: INITIAL_ADMIN_PASSWORD
+        sync: false
+
+      # ── Mercado Pago (opcional) ──
+      - key: MP_ACCESS_TOKEN
+        sync: false
+      - key: MP_PUBLIC_KEY
+        sync: false
+      - key: MP_WEBHOOK_SECRET
+        sync: false
+
+      # ── Timezone ──
+      - key: TZ
+        value: America/Argentina/Buenos_Aires

@@ -12,6 +12,12 @@
   </div>
   {% endif %}
 
+  {% if paypal_success %}
+  <div class="mb-6 p-4 rounded-lg bg-green-50 border border-green-200 text-green-800">
+    <strong>¡Suscripción PayPal activada!</strong> Ya puedes procesar PDFs ilimitados.
+  </div>
+  {% endif %}
+
   {# Mensaje de cancelacion #}
   {% if cancelled %}
   <div class="mb-6 p-4 rounded-lg bg-amber-50 border border-amber-200 text-amber-800">
@@ -99,7 +105,7 @@
       <p class="mt-1 text-slate-500 text-sm">Para uso profesional sin limites.</p>
 
       <div class="mt-6">
-        <span class="text-4xl font-bold text-slate-900">$5.000</span>
+        <span class="text-4xl font-bold text-slate-900">$7.000</span>
         <span class="text-slate-500">/mes ARS</span>
       </div>
 
@@ -134,12 +140,24 @@
             Gestionar suscripcion
           </a>
         {% else %}
-          <form method="post" action="/app/subscribe">
-            <button type="submit"
-                    class="w-full py-3 px-4 rounded-lg bg-brand-600 text-white font-semibold hover:bg-brand-700 transition">
-              Pagar con Mercado Pago
-            </button>
-          </form>
+          <div class="space-y-3">
+            <form method="post" action="/app/subscribe">
+              <button type="submit"
+                      class="w-full py-3 px-4 rounded-lg bg-brand-600 text-white font-semibold hover:bg-brand-700 transition">
+                Pagar $7.000 ARS con Mercado Pago
+              </button>
+            </form>
+            <form method="post" action="/app/subscribe/paypal">
+              <button type="submit"
+                      {% if not paypal_enabled|default(false) %}disabled title="PayPal requiere configuracion del comercio"{% endif %}
+                      class="w-full py-3 px-4 rounded-lg border border-[#0070ba] text-[#0070ba] font-semibold hover:bg-blue-50 transition disabled:opacity-50 disabled:cursor-not-allowed">
+                Pagar USD {{ paypal_monthly_price|default(5) }} con PayPal
+              </button>
+            </form>
+            {% if not paypal_enabled|default(false) %}
+            <p class="text-xs text-slate-400">PayPal estara disponible cuando se configuren las credenciales del comercio.</p>
+            {% endif %}
+          </div>
         {% endif %}
       </div>
     </div>
@@ -164,7 +182,7 @@
   {% endif %}
 
   <p class="mt-8 text-center text-xs text-slate-400">
-    Pagos procesados de forma segura por Mercado Pago. Puedes cancelar tu suscripcion en cualquier momento.
+    Pagos procesados de forma segura por Mercado Pago o PayPal. Puedes cancelar tu suscripcion desde el medio de pago correspondiente.
   </p>
 </div>
 {% endblock %}

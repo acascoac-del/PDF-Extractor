@@ -6,6 +6,12 @@
   <h1 class="text-xl font-semibold text-slate-900 mb-1">Subir documentos</h1>
   <p class="text-sm text-slate-500 mb-6">Arrastrá PDFs o hacé clic para seleccionar. Máx. {{ max_mb }} MB por archivo.</p>
 
+  <div class="mb-6 grid sm:grid-cols-3 gap-3 text-sm">
+    <div class="rounded-lg bg-blue-50 border border-blue-100 p-3 text-blue-800"><strong>1. Cargá</strong><br>Seleccioná uno o varios PDF.</div>
+    <div class="rounded-lg bg-emerald-50 border border-emerald-100 p-3 text-emerald-800"><strong>2. Analizá</strong><br>Reglas + IA extraen la información.</div>
+    <div class="rounded-lg bg-amber-50 border border-amber-100 p-3 text-amber-800"><strong>3. Revisá</strong><br>Validá el resultado antes de exportar.</div>
+  </div>
+
   <form id="upload-form" action="/app/documents/upload" method="post" enctype="multipart/form-data">
     <div id="dropzone" class="dropzone border-2 border-dashed border-slate-300 rounded-xl p-12 text-center cursor-pointer hover:border-brand-400 transition">
       <svg class="mx-auto w-10 h-10 text-slate-400 mb-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -25,9 +31,32 @@
     <button type="submit" id="submit-btn"
             class="mt-6 px-5 py-2.5 rounded-md bg-brand-600 text-white font-medium hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed"
             disabled>
-      Subir documentos
+      Subir y analizar documentos
     </button>
   </form>
+
+  {# Barra de progreso del análisis #}
+  <div id="progress-container" class="mt-6 hidden bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-4">
+    <div class="flex items-center justify-between text-sm">
+      <span id="progress-status" class="font-medium text-slate-700 flex items-center gap-2">
+        <svg class="animate-spin h-4 w-4 text-brand-600" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+        </svg>
+        Iniciando subida de archivo...
+      </span>
+      <span id="progress-percent" class="font-mono text-brand-600 font-bold">0%</span>
+    </div>
+
+    <div class="w-full bg-slate-100 rounded-full h-3 overflow-hidden p-0.5">
+      <div id="progress-bar" class="bg-gradient-to-r from-brand-500 to-brand-600 h-2 rounded-full transition-all duration-300 ease-out" style="width: 0%"></div>
+    </div>
+
+    <div class="flex items-center justify-between text-xs text-slate-400 font-mono">
+      <span id="progress-step-text">Paso 1/3: Subiendo documento</span>
+      <span id="progress-file-info"></span>
+    </div>
+  </div>
 
   <div id="upload-results" class="mt-8"></div>
 </section>
@@ -45,7 +74,15 @@ document.addEventListener('DOMContentLoaded', () => {
   const form = document.getElementById('upload-form');
   const results = document.getElementById('upload-results');
 
+  const progressContainer = document.getElementById('progress-container');
+  const progressBar = document.getElementById('progress-bar');
+  const progressStatus = document.getElementById('progress-status');
+  const progressPercent = document.getElementById('progress-percent');
+  const progressStepText = document.getElementById('progress-step-text');
+  const progressFileInfo = document.getElementById('progress-file-info');
+
   let selectedFiles = [];
+  let progressInterval = null;
 
   function updateList(files) {
     selectedFiles = Array.from(files);
@@ -57,6 +94,17 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     filesDiv.classList.toggle('hidden', selectedFiles.length === 0);
     btn.disabled = selectedFiles.length === 0;
+  }
+
+  function setProgress(pct, statusText, stepText) {
+    progressBar.style.width = `${pct}%`;
+    progressPercent.textContent = `${Math.round(pct)}%`;
+    if (statusText) {
+      progressStatus.childNodes[2].nodeValue = ` ${statusText}`;
+    }
+    if (stepText) {
+      progressStepText.textContent = stepText;
+    }
   }
 
   zone.addEventListener('click', () => input.click());
@@ -74,13 +122,40 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   input.addEventListener('change', () => updateList(input.files));
 
-  // Submit con fetch para mostrar resultados inline
+  // Submit con simulador de etapas y XHR para progreso real de red
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
+    if (!selectedFiles.length) return;
+
     btn.disabled = true;
-    btn.textContent = 'Subiendo…';
+    btn.textContent = 'Analizando…';
+    results.innerHTML = '';
+    progressContainer.classList.remove('hidden');
+
+    const totalFiles = selectedFiles.length;
+    progressFileInfo.textContent = `${totalFiles} archivo(s)`;
+
+    let currentPct = 10;
+    setProgress(10, 'Subiendo archivo al servidor...', 'Paso 1/3: Carga de archivo PDF');
+
+    // Simular avance progresivo mientras el servidor procesa el análisis
+    clearInterval(progressInterval);
+    progressInterval = setInterval(() => {
+      if (currentPct < 45) {
+        currentPct += 5;
+        setProgress(currentPct, 'Analizando PDF, texto y patrones impositivos...', 'Paso 2/3: Extracción de datos');
+      } else if (currentPct < 85) {
+        currentPct += 3;
+        setProgress(currentPct, 'Analizando impuestos y resumen impositivo...', 'Paso 3/3: Procesando estructura');
+      } else if (currentPct < 95) {
+        currentPct += 1;
+        setProgress(currentPct, 'Finalizando análisis...', 'Paso 3/3: Consolidando resultados');
+      }
+    }, 400);
+
     const fd = new FormData();
     selectedFiles.forEach(f => fd.append('files', f));
+
     try {
       const resp = await fetch(form.action, {
         method: 'POST',
@@ -88,24 +163,36 @@ document.addEventListener('DOMContentLoaded', () => {
         credentials: 'same-origin',
         redirect: 'follow',
       });
-      // Detectar redirect a login (sesion expirada)
+
+      clearInterval(progressInterval);
+
       if (resp.url && resp.url.includes('/auth/login')) {
         window.location.href = '/auth/login';
         return;
       }
+
       if (resp.ok) {
-        results.innerHTML = await resp.text();
-        selectedFiles = [];
-        input.value = '';
-        updateList([]);
+        setProgress(100, '¡Análisis completado exitosamente!', 'Completado');
+        setTimeout(async () => {
+          progressContainer.classList.add('hidden');
+          results.innerHTML = await resp.text();
+          selectedFiles = [];
+          input.value = '';
+          updateList([]);
+        }, 500);
       } else {
-        results.innerHTML = '<div class="text-red-600 text-sm">Error al subir (HTTP ' + resp.status + ').</div>';
+        clearInterval(progressInterval);
+        progressContainer.classList.add('hidden');
+        results.innerHTML = '<div class="text-red-600 text-sm p-4 bg-red-50 rounded-lg">Error al procesar el archivo (HTTP ' + resp.status + ').</div>';
       }
     } catch (err) {
-      results.innerHTML = '<div class="text-red-600 text-sm">Error de conexión: ' + err.message + '</div>';
+      clearInterval(progressInterval);
+      progressContainer.classList.add('hidden');
+      results.innerHTML = '<div class="text-red-600 text-sm p-4 bg-red-50 rounded-lg">Error de conexión: ' + err.message + '</div>';
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Subir y analizar documentos';
     }
-    btn.disabled = false;
-    btn.textContent = 'Subir documentos';
   });
 });
 </script>

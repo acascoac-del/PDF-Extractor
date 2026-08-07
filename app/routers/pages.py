@@ -34,6 +34,18 @@ def index(
     return templates.TemplateResponse("index.html", {"request": request, "user": None})
 
 
+@router.get("/como-funciona")
+def how_it_works(
+    request: Request,
+    user: User | None = Depends(get_current_user_optional),
+):
+    """Guía pública para cargar documentos y configurar la IA."""
+    return templates.TemplateResponse(
+        "guide.html",
+        {"request": request, "user": user, "max_mb": 30},
+    )
+
+
 @router.get("/app")
 def dashboard(
     request: Request,

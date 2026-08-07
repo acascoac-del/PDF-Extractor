@@ -82,4 +82,5 @@ def health() -> dict:
         "r2_enabled": settings.r2_enabled,
         "celery_enabled": settings.celery_enabled,
         "mp_enabled": settings.mp_enabled,
+        "paypal_enabled": settings.paypal_enabled,
     }

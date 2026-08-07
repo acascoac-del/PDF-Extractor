@@ -37,7 +37,7 @@ def create_preference(user, success_url: str, failure_url: str, pending_url: str
                 "title": "PDF Extractor Pro - Suscripcion Mensual",
                 "quantity": 1,
                 "currency_id": "ARS",
-                "unit_price": 5000.0,  # Precio en ARS (ajustar segun necesidad)
+                "unit_price": settings.mp_monthly_price,
             }
         ],
         "payer": {
@@ -72,7 +72,7 @@ def create_preapproval(user) -> dict:
         "auto_recurring": {
             "frequency": 1,
             "frequency_type": "months",
-            "transaction_amount": 5000.0,  # ARS, ajustar
+            "transaction_amount": settings.mp_monthly_price,
             "currency_id": "ARS",
         },
         "back_url": f"{settings.app_url}/app/subscribe/success",

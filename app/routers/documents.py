@@ -78,6 +78,13 @@ def _status_badge(status: DocStatus | str) -> str:
 
 # ============ Páginas ============
 
+@router.get("", response_class=RedirectResponse)
+@router.get("/", response_class=RedirectResponse)
+def index_redirect():
+    """Redirige /app/documents a /app/documents/list."""
+    return RedirectResponse("/app/documents/list", status_code=303)
+
+
 @router.get("/new")
 def new_upload_form(
     request: Request,
@@ -293,6 +300,32 @@ def classify_document(
         run_pipeline_sync(doc, pdf_bytes, db, user=user)
         # Incrementar contador de PDFs procesados
         increment_pdf_count(user, db)
+    except Exception as e:
+        doc.status = DocStatus.FAILED
+        doc.error_message = str(e)
+        db.commit()
+
+    return RedirectResponse(f"/app/documents/detail/{doc_id}", status_code=303)
+
+
+@router.post("/reprocess/{doc_id}")
+def reprocess_document(
+    doc_id: str,
+    user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """Re-procesa un documento con la lógica de extracción actualizada."""
+    doc = db.execute(
+        select(Document).where(Document.id == doc_id, Document.user_id == user.id)
+    ).scalar_one_or_none()
+    if doc is None:
+        raise HTTPException(404, "Documento no encontrado.")
+
+    from app.services.classification import run_pipeline_sync
+
+    try:
+        pdf_bytes = read_file(doc.upload_path)
+        run_pipeline_sync(doc, pdf_bytes, db, user=user)
     except Exception as e:
         doc.status = DocStatus.FAILED
         doc.error_message = str(e)

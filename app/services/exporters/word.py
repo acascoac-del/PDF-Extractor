@@ -109,18 +109,33 @@ def _write_invoice(d: DocxDocument, ext: Extraction) -> None:
             row[6].text = str(item.get("import", ""))
         d.add_paragraph("")
 
-    # ── Totales ──
-    _add_section_heading(d, "Totales")
+    # ── Totales y Desglose de Resumen ──
+    _add_section_heading(d, "Totales y Desglose de Impuestos")
     for key, label in [
-        ("importe_neto", "Importe Neto"), ("financiacion", "Financiación"),
-        ("icl_amount", "ICL"), ("idc_amount", "IDC"),
-        ("iva_inscripto", "IVA Inscripto"), ("iva_no_inscripto", "IVA No Inscripto"),
-        ("iva_percepcion", "IVA Percepción"), ("iva_percentage", "% IVA"),
-        ("ingresos_brutos", "Ing. Brutos"), ("tasa_vial", "Total Tasa Vial"),
+        ("subtotal", "Subtotal"), ("net", "Neto Gravado"), ("importe_neto", "Importe Neto"),
+        ("iva_amount", "IVA"), ("iva_inscripto", "IVA Inscripto"), ("iva_no_inscripto", "IVA No Inscripto"),
+        ("iibb", "IIBB"), ("ingresos_brutos", "Ing. Brutos"),
+        ("tasas_municipales", "Tasas Municipales"), ("sellos", "Sellos"),
+        ("percepcion_iva", "Percepción IVA"), ("iva_percepcion", "IVA Percepción"),
+        ("itc", "ITC (Combustibles)"), ("co2", "CO2 (Dióxido de Carbono)"),
+        ("financiacion", "Financiación"), ("icl_amount", "ICL"), ("idc_amount", "IDC"),
+        ("iva_percentage", "% IVA"), ("tasa_vial", "Total Tasa Vial"),
         ("total", "TOTAL"),
     ]:
         p = d.add_paragraph()
         _add_field(p, label, _f(fields, key))
+
+    summary_breakdown = ext.data.get("summary_breakdown", [])
+    if summary_breakdown:
+        _add_section_heading(d, "Resumen de Impuestos y Totales")
+        t = d.add_table(rows=1, cols=2, style="Light Grid Accent 1")
+        t.rows[0].cells[0].text = "Concepto / Impuesto"
+        t.rows[0].cells[1].text = "Monto"
+        for entry in summary_breakdown:
+            row = t.add_row().cells
+            row[0].text = str(entry.get("label", ""))
+            row[1].text = str(entry.get("amount", ""))
+        d.add_paragraph("")
 
     # ── IBP ──
     if ibp:

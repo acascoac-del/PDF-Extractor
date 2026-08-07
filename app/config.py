@@ -71,6 +71,14 @@ class Settings(BaseSettings):
     mp_public_key: str = ""
     mp_webhook_secret: str = ""
     mp_plan_id: str = ""  # Plan ID de Mercado Pago
+    mp_monthly_price: float = 7000.0
+
+    # --- PayPal (suscripcion mensual en USD) ---
+    paypal_client_id: str = ""
+    paypal_client_secret: str = ""
+    paypal_plan_id: str = ""
+    paypal_base_url: str = "https://api-m.sandbox.paypal.com"
+    paypal_monthly_price: float = 5.0
 
     # --- Stripe (legacy, mantener para compatibilidad) ---
     stripe_secret_key: str = ""
@@ -115,6 +123,10 @@ class Settings(BaseSettings):
     @property
     def mp_enabled(self) -> bool:
         return bool(self.mp_access_token)
+
+    @property
+    def paypal_enabled(self) -> bool:
+        return bool(self.paypal_client_id and self.paypal_client_secret and self.paypal_plan_id)
 
     def ensure_dirs(self) -> None:
         """Crea los directorios de almacenamiento si no existen."""

@@ -23,20 +23,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/app/settings")
 templates = Jinja2Templates(directory="app/templates")
 
-# --- Presets de URL base por proveedor ---
-PROVIDER_URLS = {
-    "openai": "https://api.openai.com/v1",
-    "openrouter": "https://openrouter.ai/api/v1",
-    "groq": "https://api.groq.com/openai/v1",
-    "ollama": "http://localhost:11434/v1",
-    "custom": "",
-}
+from app.services.llm import PROVIDER_URLS
 
 PROVIDER_LABELS = {
-    "openai": "OpenAI",
-    "openrouter": "OpenRouter",
     "groq": "Groq",
-    "ollama": "Ollama",
+    "openrouter": "OpenRouter",
+    "openai": "OpenAI",
+    "ollama": "Ollama (Local)",
     "custom": "Personalizado",
 }
 
@@ -99,8 +92,23 @@ def save_llm_settings(
     if user is None:
         return RedirectResponse("/auth/login", status_code=303)
 
+    # Si no se proporciona base_url, autocompletar con la URL base del proveedor seleccionado
+    if not base_url and provider in PROVIDER_URLS:
+        base_url = PROVIDER_URLS[provider]
+
+    DEFAULT_MODELS = {
+        "groq": "llama-3.3-70b-versatile",
+        "openrouter": "qwen/qwen-2.5-72b-instruct",
+        "openai": "gpt-4o-mini",
+        "ollama": "llama3.2",
+    }
+
+    if not model or (provider == "groq" and model in ("gpt-4o-mini", "llama3-70b-8192", "llama3-8b-8192")) or (provider == "openrouter" and model in ("gpt-4o-mini", "qwen")):
+        model = DEFAULT_MODELS.get(provider, "gpt-4o-mini")
+
     # Construir el objeto settings
-    current_settings = user.settings if user.settings and isinstance(user.settings, dict) else {}
+    from sqlalchemy.orm.attributes import flag_modified
+    current_settings = dict(user.settings) if user.settings and isinstance(user.settings, dict) else {}
     current_settings["llm"] = {
         "provider": provider,
         "api_key": api_key,
@@ -109,6 +117,7 @@ def save_llm_settings(
         "temperature": temperature,
     }
     user.settings = current_settings
+    flag_modified(user, "settings")
     db.commit()
     db.refresh(user)
 
@@ -148,7 +157,7 @@ async def fetch_models(
         )
 
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             if provider == "ollama":
                 # Ollama usa un endpoint diferente: /api/tags
                 ollama_base = base_url.replace("/v1", "").rstrip("/")
@@ -173,6 +182,7 @@ async def fetch_models(
                     for m in raw_models
                 ]
 
+        models.sort(key=lambda x: x["id"].lower())
         return JSONResponse({"models": models})
 
     except httpx.HTTPStatusError as e:
@@ -180,6 +190,12 @@ async def fetch_models(
         return JSONResponse(
             {"error": f"Error del proveedor (HTTP {e.response.status_code}). Verificá tu API key."},
             status_code=e.response.status_code,
+        )
+    except httpx.TimeoutException:
+        logger.warning("Timeout fetching models from %s", provider)
+        return JSONResponse(
+            {"error": "El proveedor tardó demasiado en responder (timeout)."},
+            status_code=504,
         )
     except httpx.ConnectError:
         logger.warning("Connection error fetching models from %s", provider)

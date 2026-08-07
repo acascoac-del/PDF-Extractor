@@ -25,7 +25,7 @@ def process_document(self, document_id: str) -> dict:
         db.commit()
 
         pdf_path = abs_path_for(doc.upload_path)
-        run_pipeline_sync(doc, pdf_path, db)
+        run_pipeline_sync(doc, pdf_path, db, user=doc.user)
 
         return {
             "document_id": document_id,

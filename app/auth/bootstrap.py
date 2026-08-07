@@ -17,6 +17,8 @@ def ensure_initial_admin() -> None:
     try:
         email = settings.initial_admin_email.strip().lower()
         username = settings.initial_admin_username.strip().lower()
+        if not email or not settings.initial_admin_password:
+            return
         existing = (
             db.query(User).filter((User.email == email) | (User.username == username)).first()
         )
@@ -32,5 +34,7 @@ def ensure_initial_admin() -> None:
         )
         db.add(admin)
         db.commit()
+    except Exception:
+        db.rollback()
     finally:
         db.close()

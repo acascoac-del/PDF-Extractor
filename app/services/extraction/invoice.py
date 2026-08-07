@@ -277,15 +277,64 @@ def extract_invoice(content: PdfContent, llm_client=None, user=None) -> Extracti
         confidence=0.75 if _detect_invoice_type(full_text) else 0.0,
     )
 
-    # --- Totales ---
+    # --- Totales y Desglose de Resumen ---
+    # Subtotal
+    result.set_field(
+        "subtotal",
+        _extract_amount_pattern(full_text, r"\bsubtotal\b"),
+        source="rules",
+        confidence=0.80,
+    )
     # "neto gravado" / "neto" con word boundary
     result.set_field("net", _extract_amount_pattern(full_text, r"\bneto\b"), source="rules", confidence=0.70)
     # "IVA 21%: 58275" o "IVA: 58275" — NO matchear "condicion ante iva"
     iva_val = _extract_amount_pattern(full_text, r"\biva\s+\d+(?:\.\d+)?%\s*:")
     result.set_field("iva_amount", iva_val, source="rules", confidence=0.70)
+    # IIBB / Ingresos Brutos
+    result.set_field(
+        "iibb",
+        _extract_amount_pattern(full_text, r"\biibb\b|percep(?:ci[oó]n|\.)?\s*iibb"),
+        source="rules",
+        confidence=0.80,
+    )
+    # Tasas Municipales
+    result.set_field(
+        "tasas_municipales",
+        _extract_amount_pattern(full_text, r"tasas?\s+municipales?|tasa\s+municipal"),
+        source="rules",
+        confidence=0.80,
+    )
+    # Impuesto de Sellos
+    result.set_field(
+        "sellos",
+        _extract_amount_pattern(full_text, r"(?:impuesto\s+de\s+)?sellos"),
+        source="rules",
+        confidence=0.80,
+    )
+    # Percepción IVA
+    result.set_field(
+        "percepcion_iva",
+        _extract_amount_pattern(full_text, r"percep(?:ci[oó]n|\.)?\s*iva|iva\s*percepci[oó]n"),
+        source="rules",
+        confidence=0.80,
+    )
+    # ITC (Impuesto a los Combustibles)
+    result.set_field(
+        "itc",
+        _extract_amount_pattern(full_text, r"\bitc\b|impuesto\s+(?:a\s+los\s+)?combustibles?"),
+        source="rules",
+        confidence=0.80,
+    )
+    # CO2 (Impuesto al Dióxido de Carbono)
+    result.set_field(
+        "co2",
+        _extract_amount_pattern(full_text, r"\bco2\b|impuesto\s+(?:al\s+)?co2"),
+        source="rules",
+        confidence=0.80,
+    )
     # "total" con word boundary para NO matchear "subtotal" ni "total tasa vial"
     result.set_field(
-        "total", _extract_amount_pattern(full_text, r"\btotal\b(?!.*tasa\s+vial)"),
+        "total", _extract_total_amount(full_text),
         source="rules", confidence=0.90,
     )
 
@@ -330,7 +379,7 @@ def extract_invoice(content: PdfContent, llm_client=None, user=None) -> Extracti
     # IMPORTE ING. BRUTOS
     result.set_field(
         "ingresos_brutos",
-        _extract_amount_pattern(full_text, r"ing(?:resos)?\.?\s*brutos|importe\s+ing\.?\s*brutos"),
+        _extract_ingresos_brutos_amount(full_text),
         source="rules",
         confidence=0.80,
     )
@@ -385,7 +434,7 @@ def extract_invoice(content: PdfContent, llm_client=None, user=None) -> Extracti
     items_found = len(valid_items)
 
     # Baja calidad si: pocos campos, baja confianza, O no se encontraron items válidos
-    quality_low = non_null_fields < 5 or avg_confidence < 0.5 or items_found == 0
+    quality_low = non_null_fields < 5 or avg_confidence < 0.50 or items_found == 0
 
     logger.info(
         "Extraction quality: %d fields, avg_confidence=%.2f, items_found=%d, quality_low=%s",
@@ -400,30 +449,35 @@ def extract_invoice(content: PdfContent, llm_client=None, user=None) -> Extracti
         except ImportError:
             llm_client = None
 
-    # --- LLM: primario (baja calidad) o enriquecimiento (alta calidad) ---
-    if quality_low and llm_client is not None:
+    if llm_client is not None:
         try:
-            llm_model_name = getattr(llm_client, "model", None)
-            llm_data = _llm_primary_extract(full_text, llm_client, user=user)
-            if llm_data:
-                _merge_llm_primary(result, llm_data, llm_model=llm_model_name)
-                result.llm_primary = True
-                logger.info("LLM primary extraction applied successfully")
-            else:
-                logger.warning("LLM primary extraction returned no data, falling back to enrichment")
-                _enrich_with_llm(result, full_text, llm_client, user=user)
+            from app.services.llm import _get_model_and_temperature
+            active_model_name, _ = _get_model_and_temperature(user=user, client=llm_client)
         except Exception:
-            logger.exception("LLM primary extraction failed, falling back to enrichment")
+            active_model_name = getattr(llm_client, "model", None) or "LLM"
+
+        unique_text = content.unique_text
+        if quality_low:
             try:
-                _enrich_with_llm(result, full_text, llm_client, user=user)
+                llm_data = _llm_primary_extract(unique_text, llm_client, user=user)
+                if llm_data:
+                    _merge_llm_primary(result, llm_data, llm_model=active_model_name)
+                    result.llm_primary = True
+                    result.llm_model = active_model_name
+                    logger.info("LLM primary extraction applied successfully with model %s", active_model_name)
+            except Exception:
+                logger.exception("LLM primary extraction failed")
+        else:
+            try:
+                _enrich_with_llm(result, unique_text, llm_client, user=user)
+                result.llm_model = active_model_name
             except Exception:
                 pass
-    elif llm_client is not None:
-        # Comportamiento actual: reglas primarias, LLM llena gaps
-        try:
-            _enrich_with_llm(result, full_text, llm_client, user=user)
-        except Exception:
-            pass  # El LLM es opcional; si falla, nos quedamos con las reglas.
+
+    # --- Consolidar cuadro resumen de impuestos y totales ---
+    fields = result.data.get("fields", {})
+    existing_sb = result.data.get("summary_breakdown")
+    result.data["summary_breakdown"] = _build_summary_breakdown(fields, existing_sb)
 
     return result
 
@@ -610,8 +664,41 @@ def _extract_receptor_cuit(text: str) -> str | None:
     return None
 
 
+_ANEXO_NUMBER_RE = re.compile(
+    r"(?:FACTURA|ANEXO\s+DE\s+FACTURA)[^\n]{0,50}?(?:N[°ºo]?\s*)?(\d{4}[-\s]\d{8})",
+    re.IGNORECASE,
+)
+_ANEXO_LETTER_RE = re.compile(
+    r"(?:FACTURA|ANEXO\s+DE\s+FACTURA)\s+([ABC])\b",
+    re.IGNORECASE,
+)
+_ANEXO_EMITTER_RE = re.compile(
+    r"(?:^|\n)\s*([A-Z][A-Z0-9 .,&-]{3,100}(?:S\.?A\.?|S\.?R\.?L\.?))\s+C\.?U\.?I\.?T\.?\s*:",
+    re.IGNORECASE,
+)
+_ANEXO_ADDRESS_RE = re.compile(
+    r"(?:Direcci[oó]n|Domicilio)\s*:\s*([^\n]+)",
+    re.IGNORECASE,
+)
+_ANEXO_IIBB_RE = re.compile(
+    r"(?:Ing\.?\s+Brutos|IIBB)\s*:\s*([\d./-]+)",
+    re.IGNORECASE,
+)
+_ANEXO_START_DATE_RE = re.compile(
+    r"Inicio\s+de\s+Actividades\s*:\s*(\d{1,2}[\s/\-.]\d{1,2}[\s/\-.]\d{2,4})",
+    re.IGNORECASE,
+)
+_STANDALONE_TOTAL_RE = re.compile(
+    r"(?:^|\n)\s*Total\s*[:$]?\s*([\d.,]+)\s*(?:\n|$)",
+    re.IGNORECASE,
+)
+
+
 def _extract_invoice_number(text: str) -> str | None:
     m = _INVOICE_NUM_RE.search(text)
+    if m:
+        return m.group(1).strip()
+    m = _ANEXO_NUMBER_RE.search(text)
     return m.group(1).strip() if m else None
 
 
@@ -620,15 +707,24 @@ def _extract_invoice_letter(text: str) -> str | None:
     m = _INVOICE_LETTER_RE.search(text)
     if m:
         return m.group(1).upper()
+    m = _ANEXO_LETTER_RE.search(text)
+    if m:
+        return m.group(1).upper()
     return None
 
 
 def _extract_emitter_name(text: str) -> str | None:
     """Extrae la razón social del emisor (ej: 'YPF S.A.')."""
     # Buscar línea que contiene nombre de empresa + S.A./SRL/etc.
+    m = _ANEXO_EMITTER_RE.search(text)
+    if m:
+        return m.group(1).strip()
     m = _EMITTER_NAME_RE.search(text)
     if m:
         return m.group(0).strip()
+    m = _ANEXO_EMITTER_RE.search(text)
+    if m:
+        return m.group(1).strip()
     return None
 
 
@@ -645,6 +741,9 @@ def _extract_emitter_address(text: str) -> str | None:
     m = _EMITTER_ADDRESS_RE.search(text)
     if m:
         return m.group(1).strip()
+    m = _ANEXO_ADDRESS_RE.search(text)
+    if m:
+        return m.group(1).strip()
     return None
 
 
@@ -659,6 +758,9 @@ def _extract_receptor_address(text: str) -> str | None:
 def _extract_emitter_iibb(text: str) -> str | None:
     """Extrae el IIBB del emisor."""
     m = _EMITTER_IIBB_RE.search(text)
+    if m:
+        return m.group(1).strip()
+    m = _ANEXO_IIBB_RE.search(text)
     if m:
         return m.group(1).strip()
     return None
@@ -683,6 +785,9 @@ def _extract_emitter_iva_condition(text: str) -> str | None:
 def _extract_emitter_start_date(text: str) -> str | None:
     """Extrae la fecha de inicio de actividades."""
     m = _START_DATE_RE.search(text)
+    if m:
+        return m.group(1).strip()
+    m = _ANEXO_START_DATE_RE.search(text)
     if m:
         return m.group(1).strip()
     return None
@@ -812,23 +917,28 @@ def _detect_invoice_type(text: str) -> str | None:
 
 def _parse_amount(raw: str) -> float | None:
     """Parsea un monto: detecta formato 1.234.567,89 (europeo) vs 1234567.89 (US)."""
+    if not isinstance(raw, str):
+        raw = str(raw or "")
     raw = raw.strip()
     if not raw:
         return None
-    # Formato europeo: 1.234.567,89 → quitar puntos, cambiar coma por punto
-    if "," in raw and "." in raw:
-        return float(raw.replace(".", "").replace(",", "."))
-    # Solo comas: 1234567,89 → cambiar coma por punto
-    if "," in raw:
-        return float(raw.replace(",", "."))
-    # Solo puntos: puede ser 1.234.567 (miles) o 1234567.89 (decimal)
-    if "." in raw:
-        parts = raw.split(".")
-        if len(parts[-1]) == 3 and len(parts) > 1:
-            # Formato de miles: 1.234.567 → quitar puntos
-            return float(raw.replace(".", ""))
-        # Decimal: 1234567.89 → directo
-    return float(raw)
+    try:
+        # Formato europeo: 1.234.567,89 → quitar puntos, cambiar coma por punto
+        if "," in raw and "." in raw:
+            return float(raw.replace(".", "").replace(",", "."))
+        # Solo comas: 1234567,89 → cambiar coma por punto
+        if "," in raw:
+            return float(raw.replace(",", "."))
+        # Solo puntos: puede ser 1.234.567 (miles) o 1234567.89 (decimal)
+        if "." in raw:
+            parts = raw.split(".")
+            if len(parts[-1]) == 3 and len(parts) > 1:
+                # Formato de miles: 1.234.567 → quitar puntos
+                return float(raw.replace(".", ""))
+            # Decimal: 1234567.89 → directo
+        return float(raw)
+    except (ValueError, TypeError):
+        return None
 
 
 def _extract_amount(text: str, label: str) -> float | None:
@@ -842,6 +952,30 @@ def _extract_amount(text: str, label: str) -> float | None:
     m = pattern.search(text_l)
     if m:
         return _parse_amount(m.group(1))
+    return None
+
+
+def _extract_total_amount(text: str) -> float | None:
+    """Extrae el total final, evitando el encabezado "Precio Total"."""
+    matches = list(_STANDALONE_TOTAL_RE.finditer(text))
+    if matches:
+        return _parse_amount(matches[-1].group(1))
+    return _extract_amount_pattern(text, r"\btotal\b(?!.*tasa\s+vial)")
+
+
+def _extract_ingresos_brutos_amount(text: str) -> float | None:
+    """Extrae el importe de IIBB, no el número de inscripción del emisor."""
+    pattern = re.compile(
+        r"(?:ing(?:resos)?\.?\s*brutos|importe\s+ing\.?\s*brutos)\s*:\s*([^\n]+)",
+        re.IGNORECASE,
+    )
+    for match in pattern.finditer(text):
+        raw = match.group(1).strip()
+        if re.match(r"^\d{1,3}\s*[-/]\s*\d", raw):
+            continue
+        number = re.match(r"[\d.,]+", raw)
+        if number:
+            return _parse_amount(number.group(0))
     return None
 
 
@@ -965,8 +1099,28 @@ def _is_valid_item(item: dict[str, Any]) -> bool:
     return has_numeric
 
 
+def deduplicate_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Elimina ítems duplicados basándose en código, descripción, cantidad y subtotal."""
+    seen = set()
+    deduped = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        code = str(item.get("code") or "").strip().lower()
+        desc = str(item.get("description") or "").strip().lower()
+        qty = item.get("quantity")
+        subtotal = item.get("subtotal") if item.get("subtotal") is not None else item.get("import")
+
+        key = (code, desc, qty, subtotal)
+        if key in seen and key != ("", "", None, None):
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return deduped
+
+
 def _extract_items(content: PdfContent) -> list[dict[str, Any]]:
-    """Extrae items: primero intenta tablas, luego texto libre como fallback."""
+    """Extrae items: primero intenta tablas, luego texto libre como fallback de páginas únicas."""
     # 1) Intentar extracción desde tablas (pdfplumber)
     items = _extract_items_from_tables(content)
 
@@ -977,58 +1131,162 @@ def _extract_items(content: PdfContent) -> list[dict[str, Any]]:
     return [it for it in items if _is_valid_item(it)]
 
 
+def _map_table_columns(header_row: list[Any]) -> dict[str, int]:
+    """Mapea nombres de encabezados de columnas a índices."""
+    mapping: dict[str, int] = {}
+    for idx, cell in enumerate(header_row):
+        if not cell:
+            continue
+        c_lower = str(cell).lower().strip()
+
+        if any(kw in c_lower for kw in ["cód", "cod", "artículo", "articulo", "item"]):
+            if "code" not in mapping:
+                mapping["code"] = idx
+
+        if any(kw in c_lower for kw in ["descrip", "detalle", "concepto", "producto"]):
+            if "description" not in mapping:
+                mapping["description"] = idx
+
+        if any(kw in c_lower for kw in ["cant", "cantidad", "unidades"]):
+            if "quantity" not in mapping:
+                mapping["quantity"] = idx
+
+        if any(kw in c_lower for kw in ["unidad", "u.m", "um", "medida"]):
+            if "unit" not in mapping:
+                mapping["unit"] = idx
+
+        if any(kw in c_lower for kw in ["riesgo", "onu"]):
+            if "risk_un" not in mapping:
+                mapping["risk_un"] = idx
+
+        if any(kw in c_lower for kw in ["p.u", "pu", "p. unit", "unitario", "val_unitario", "valor unitario"]):
+            if "unit_price" not in mapping:
+                mapping["unit_price"] = idx
+        elif "precio" in c_lower and "total" not in c_lower and "subtotal" not in c_lower and "importe" not in c_lower:
+            if "unit_price" not in mapping:
+                mapping["unit_price"] = idx
+
+        if any(kw in c_lower for kw in ["importe", "subtotal", "monto"]):
+            if "subtotal" not in mapping:
+                mapping["subtotal"] = idx
+        elif "total" in c_lower and "unitario" not in c_lower and "p. unit" not in c_lower:
+            if "subtotal" not in mapping:
+                mapping["subtotal"] = idx
+
+    return mapping
+
+
 def _extract_items_from_tables(content: PdfContent) -> list[dict[str, Any]]:
-    """Intenta extraer ítems de las tablas detectadas por pdfplumber."""
+    """Intenta extraer ítems de las tablas detectadas por pdfplumber en páginas únicas."""
     items: list[dict] = []
-    # Recorrer tablas de todas las páginas
     all_tables: list = []
-    for page_tables in content.tables:
-        for tbl in page_tables:
-            all_tables.append(tbl)
+
+    unique_pages = content.get_unique_pages()
+    unique_indices = {idx for idx, _ in unique_pages}
+
+    for page_idx, page_tables in enumerate(content.tables):
+        if page_idx in unique_indices:
+            for tbl in page_tables:
+                all_tables.append(tbl)
 
     for tbl in all_tables:
         if len(tbl) < 2:
             continue
-        # Ignorar filas de encabezado (primeras)
-        for row in tbl[1:]:
-            item: dict[str, Any] = {}
-            # Intentar mapear columnas
-            if len(row) >= 4:
-                # Patrón: descripción, cantidad, PU, subtotal
-                item["description"] = row[0] if row[0] else ""
-                try:
-                    item["quantity"] = float(
-                        str(row[-3] or "0").replace(".", "").replace(",", ".")
-                    )
-                except ValueError:
-                    item["quantity"] = None
-                try:
-                    item["unit_price"] = float(
-                        str(row[-2] or "0").replace(".", "").replace(",", ".")
-                    )
-                except ValueError:
-                    item["unit_price"] = None
-                try:
-                    item["subtotal"] = float(
-                        str(row[-1] or "0").replace(".", "").replace(",", ".")
-                    )
-                except ValueError:
-                    item["subtotal"] = None
-            else:
-                item["description"] = " ".join(str(c) for c in row if c)
 
-            if any(v for k, v in item.items() if k != "description" and v is not None):
-                item["source"] = "table"
-                item["confidence"] = 0.60
-                if _is_valid_item(item):
-                    items.append(item)
+        header_idx = -1
+        col_map: dict[str, int] = {}
+        for r_idx in range(min(3, len(tbl))):
+            row = tbl[r_idx]
+            mapping = _map_table_columns(row)
+            if "description" in mapping or "subtotal" in mapping or "quantity" in mapping:
+                header_idx = r_idx
+                col_map = mapping
+                break
+
+        start_row = header_idx + 1 if header_idx != -1 else 1
+
+        for row in tbl[start_row:]:
+            if not row or not any(c for c in row if c):
+                continue
+            item: dict[str, Any] = {
+                "code": "",
+                "description": "",
+                "quantity": None,
+                "unit": "",
+                "risk_un": "",
+                "unit_price": None,
+                "subtotal": None,
+            }
+
+            if col_map:
+                if "code" in col_map and col_map["code"] < len(row):
+                    item["code"] = str(row[col_map["code"]] or "").strip()
+                if "description" in col_map and col_map["description"] < len(row):
+                    raw_desc = str(row[col_map["description"]] or "").strip()
+                    raw_desc = re.sub(r"\s+", " ", raw_desc)
+                    code_match = re.match(r"^(\d{4,14})\s*[-:]\s*(.+)$", raw_desc)
+                    if code_match:
+                        if not item.get("code"):
+                            item["code"] = code_match.group(1)
+                        item["description"] = code_match.group(2).strip()
+                    else:
+                        item["description"] = raw_desc
+                if "quantity" in col_map and col_map["quantity"] < len(row):
+                    item["quantity"] = _parse_amount(str(row[col_map["quantity"]] or ""))
+                if "unit" in col_map and col_map["unit"] < len(row):
+                    item["unit"] = str(row[col_map["unit"]] or "").strip()
+                if "risk_un" in col_map and col_map["risk_un"] < len(row):
+                    item["risk_un"] = str(row[col_map["risk_un"]] or "").strip()
+                if "unit_price" in col_map and col_map["unit_price"] < len(row):
+                    item["unit_price"] = _parse_amount(str(row[col_map["unit_price"]] or ""))
+                if "subtotal" in col_map and col_map["subtotal"] < len(row):
+                    item["subtotal"] = _parse_amount(str(row[col_map["subtotal"]] or ""))
+
+                if item["quantity"] is not None and item["unit_price"] is not None and item["subtotal"] is None:
+                    item["subtotal"] = round(item["quantity"] * item["unit_price"], 2)
+                elif item["quantity"] is not None and item["subtotal"] is not None and item["unit_price"] is None:
+                    if item["quantity"] > 0:
+                        item["unit_price"] = round(item["subtotal"] / item["quantity"], 2)
+
+            # Fallback heurístico si no hubo col_map o si faltó description
+            if not item.get("description"):
+                non_empty = [str(c).strip() for c in row if c and str(c).strip()]
+                if not non_empty:
+                    continue
+                if len(row) >= 4:
+                    if re.match(r"^\d{4,14}$", str(row[0] or "").strip()) and len(row) > 1 and row[1]:
+                        item["code"] = str(row[0]).strip()
+                        item["description"] = str(row[1]).strip()
+                    else:
+                        item["description"] = str(row[0]).strip()
+
+                    item["quantity"] = item.get("quantity") or _parse_amount(str(row[-3] or ""))
+                    item["unit_price"] = item.get("unit_price") or _parse_amount(str(row[-2] or ""))
+                    item["subtotal"] = item.get("subtotal") or _parse_amount(str(row[-1] or ""))
+                else:
+                    item["description"] = " ".join(non_empty)
+
+            item["source"] = "table"
+            item["confidence"] = 0.70
+            if _is_valid_item(item):
+                items.append(item)
 
     return items
 
 
-# Regex para línea principal de item (YPF-style):
-#   CODIGO  DESCRIPCION  CANTIDAD  UM  RIESGO  VALOR_UNITARIO  IMPORTE
-# Ejemplo: 401200 DIESEL 500 3.783,300 L 301202 1.501,749 5.681.568,52
+# Regex para línea principal de item (YPF/PAE/Standard petrol):
+# Ejemplo PAE: 000000011435 BS QUANTUM DIESEL X10 - 0983 498,00 L 1.922,35 957.332,15
+_ITEM_LINE_PAE_RE = re.compile(
+    r"^(\d{4,14})\s+"        # CODIGO (4 a 14 dígitos)
+    r"(.+?)\s+"              # DESCRIPCION
+    r"([\d.,]+)\s+"          # CANTIDAD
+    r"(L|EN|KG|UN|M3|GL)\s+" # UM
+    r"(?:([\d.,]+)\s+)?"     # BASE / RIESGO (opcional)
+    r"([\d.,]+)\s+"          # VALOR UNITARIO
+    r"([\d.,]+)$",           # IMPORTE
+    re.MULTILINE,
+)
+
 _ITEM_LINE_RE = re.compile(
     r"^(\d{6})\s+"           # CODIGO (6 dígitos)
     r"(.+?)\s+"              # DESCRIPCION (variable, non-greedy)
@@ -1060,52 +1318,80 @@ _MODIFIER_RE = re.compile(
     re.MULTILINE,
 )
 
+# Formato de anexos TDU/Strix: cantidad + código + descripción + período +
+# precio total, con la patente en la línea siguiente.
+_STRIX_LINE_RE = re.compile(
+    r"^\s*([\d.,]+)\s+"
+    r"(\d{4,14})\s*-\s*"
+    r"(.+?)\s+"
+    r"(\d{1,2}/\d{1,2}/\d{4})\s+AL\s+"
+    r"(\d{1,2}/\d{1,2}/\d{4})\s+"
+    r"([\d.,]+)\s*$",
+    re.MULTILINE,
+)
+
 
 def _extract_items_from_text(content: PdfContent) -> list[dict[str, Any]]:
-    """Extrae items parseando líneas de texto (para PDFs sin tablas, ej. YPF)."""
+    """Extrae items parseando líneas de texto (para PDFs sin tablas, ej. YPF, PAE) en páginas únicas."""
     items: list[dict[str, Any]] = []
 
-    full_text = content.full_text
+    strix_items = _extract_strix_items_from_text(content)
+    if strix_items:
+        return strix_items
+
+    full_text = content.unique_text
     if not full_text:
         return items
 
     # Encontrar todas las líneas principales de items
-    main_matches = list(_ITEM_LINE_RE.finditer(full_text))
+    main_matches = list(_ITEM_LINE_PAE_RE.finditer(full_text))
     if not main_matches:
-        # Intentar regex flexible como fallback
+        main_matches = list(_ITEM_LINE_RE.finditer(full_text))
+    if not main_matches:
         main_matches = list(_ITEM_LINE_FLEX_RE.finditer(full_text))
 
     if not main_matches:
         return items
 
-    # Construir lista de (start, end, match) para items principales
     item_spans = [(m.start(), m.end(), m) for m in main_matches]
-
-    # Encontrar todas las líneas modificadoras
     modifier_matches = list(_MODIFIER_RE.finditer(full_text))
 
     for idx, (start, end, m) in enumerate(item_spans):
+        groups = m.groups()
+        if len(groups) >= 6:
+            code = groups[0]
+            desc = groups[1].strip()
+            qty = _parse_amount(groups[2])
+            unit = groups[3]
+            if len(groups) == 6:
+                pu = _parse_amount(groups[4])
+                imp = _parse_amount(groups[5])
+                risk = None
+            else:
+                risk = groups[4]
+                pu = _parse_amount(groups[5])
+                imp = _parse_amount(groups[6])
+        else:
+            continue
+
         item: dict[str, Any] = {
-            "code": m.group(1),
-            "description": m.group(2).strip(),
-            "quantity": _parse_amount(m.group(3)),
-            "unit": m.group(4),
-            "risk_un": m.group(5),
-            "unit_price": _parse_amount(m.group(6)),
-            "import": _parse_amount(m.group(7)),
+            "code": code,
+            "description": desc,
+            "quantity": qty,
+            "unit": unit,
+            "risk_un": risk,
+            "unit_price": pu,
+            "import": imp,
             "modifiers": [],
             "source": "rules",
-            "confidence": 0.50,
+            "confidence": 0.60,
         }
 
-        # Determinar el rango de texto entre este item y el siguiente
         next_start = item_spans[idx + 1][0] if idx + 1 < len(item_spans) else len(full_text)
 
-        # Asignar líneas modificadoras que caen entre este item y el siguiente
         for mod_m in modifier_matches:
             mod_start = mod_m.start()
             if start < mod_start < next_start:
-                # Capturar el texto completo de la línea modificadora
                 modifier_text = mod_m.group(0).strip()
                 if modifier_text:
                     item["modifiers"].append(modifier_text)
@@ -1113,6 +1399,91 @@ def _extract_items_from_text(content: PdfContent) -> list[dict[str, Any]]:
         items.append(item)
 
     return items
+
+
+def _extract_strix_items_from_text(content: PdfContent) -> list[dict[str, Any]]:
+    """Extrae todos los renglones de anexos TDU/Strix multipágina."""
+    items: list[dict[str, Any]] = []
+    for _, page_text in content.get_unique_pages():
+        if not page_text:
+            continue
+        matches = list(_STRIX_LINE_RE.finditer(page_text))
+        for idx, match in enumerate(matches):
+            quantity = _parse_amount(match.group(1))
+            line_total = _parse_amount(match.group(6))
+            if quantity is None or line_total is None:
+                continue
+
+            segment_end = matches[idx + 1].start() if idx + 1 < len(matches) else len(page_text)
+            continuation = page_text[match.end():segment_end]
+            continuation_lines = []
+            for line in continuation.splitlines():
+                clean_line = re.sub(r"\s+", " ", line).strip()
+                if clean_line and (clean_line.startswith("(") or "Patente" in clean_line):
+                    continuation_lines.append(clean_line)
+
+            description = match.group(3).strip()
+            if continuation_lines:
+                description = f"{description} {' '.join(continuation_lines)}"
+
+            items.append({
+                "code": match.group(2).strip(),
+                "description": description,
+                "quantity": quantity,
+                "unit": "",
+                "risk_un": "",
+                "unit_price": round(line_total / quantity, 2) if quantity > 0 else None,
+                "import": line_total,
+                "source": "rules",
+                "confidence": 0.90,
+            })
+
+    return items
+
+
+def _parse_llm_items(llm_items: list) -> list[dict[str, Any]]:
+    """Parsea lista de ítems provenientes del LLM manejando variaciones de keys."""
+    parsed_items = []
+    for item in llm_items:
+        if not isinstance(item, dict):
+            continue
+        desc = str(
+            item.get("description")
+            or item.get("descripcion")
+            or item.get("concepto")
+            or item.get("detalle")
+            or item.get("producto")
+            or ""
+        ).strip()
+        if not desc:
+            continue
+
+        code = str(item.get("code") or item.get("codigo") or item.get("cod") or item.get("art") or "").strip()
+
+        qty_raw = item.get("quantity") if item.get("quantity") is not None else item.get("cantidad", item.get("cant"))
+        qty = _parse_amount(str(qty_raw)) if qty_raw is not None else 1.0
+
+        unit = str(item.get("unit") or item.get("unidad") or item.get("um") or "").strip()
+        risk_un = str(item.get("risk_un") or item.get("riesgo_onu") or item.get("riesgo") or "").strip()
+
+        up_raw = item.get("unit_price") if item.get("unit_price") is not None else item.get("precio_unitario", item.get("precio", item.get("val_unitario")))
+        unit_price = _parse_amount(str(up_raw)) if up_raw is not None else None
+
+        imp_raw = item.get("import") if item.get("import") is not None else item.get("subtotal", item.get("importe", item.get("total", item.get("monto"))))
+        subtotal = _parse_amount(str(imp_raw)) if imp_raw is not None else None
+
+        parsed_items.append({
+            "code": code,
+            "description": desc,
+            "quantity": qty if qty is not None else 1.0,
+            "unit": unit,
+            "risk_un": risk_un,
+            "unit_price": unit_price,
+            "import": subtotal,
+            "source": "llm",
+            "confidence": 0.75,
+        })
+    return parsed_items
 
 
 def _llm_primary_extract(text: str, llm_client, user=None) -> dict | None:
@@ -1123,7 +1494,7 @@ def _llm_primary_extract(text: str, llm_client, user=None) -> dict | None:
     """
     try:
         from app.services.llm import _get_model_and_temperature
-        model, _ = _get_model_and_temperature(user)
+        model, _ = _get_model_and_temperature(user=user, client=llm_client)
     except ImportError:
         model = getattr(llm_client, "model", None) or "gpt-4o-mini"
 
@@ -1157,22 +1528,45 @@ Items (array de objetos, cada uno con):
 Para montos: usar punto como separador decimal y nada para miles (ej: 1234567.89)
 Para fechas: formato DD/MM/YYYY
 
-SOLO el JSON, sin markdown ni explicaciones.
+Responde ÚNICAMENTE con el objeto JSON válido dentro de un bloque ```json ... ```, sin explicaciones fuera del JSON.
 """
+    provider = getattr(llm_client, "provider", "")
+    if provider == "groq" or "groq" in str(getattr(llm_client, "base_url", "")).lower():
+        max_tokens = 2048
+        text_limit = 6000
+    else:
+        max_tokens = 4096
+        text_limit = 12000
+
     try:
-        resp = llm_client.chat.completions.create(
-            model=model,
-            temperature=0.0,
-            messages=[
+        kwargs = {
+            "model": model,
+            "temperature": 0.0 if "deepseek-r1" not in model.lower() else 0.6,
+            "max_tokens": max_tokens,
+            "messages": [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": text[:12000]},
+                {"role": "user", "content": text[:text_limit]},
             ],
-        )
-        content = resp.choices[0].message.content
-        if not content:
-            return None
+        }
+        try:
+            resp = llm_client.chat.completions.create(
+                **kwargs,
+                response_format={"type": "json_object"},
+            )
+        except Exception:
+            resp = llm_client.chat.completions.create(**kwargs)
+
+        content = resp.choices[0].message.content or ""
+        try:
+            from app.services.llm import clean_json_response
+            parsed = clean_json_response(content)
+            if isinstance(parsed, dict):
+                return parsed
+        except ImportError:
+            pass
+
+        # Fallback a json.loads básico si import falla
         content = content.strip()
-        # Limpiar fences de markdown
         if content.startswith("```"):
             content = content.split("\n", 1)[-1]
         if content.endswith("```"):
@@ -1188,17 +1582,11 @@ def _merge_llm_primary(
     llm_data: dict,
     llm_model: str | None = None,
 ) -> None:
-    """Combina resultado LLM (base) con reglas (override para alta confianza).
-
-    - Los campos del LLM se usan como base.
-    - Las reglas con confianza >= 0.8 sobreescriben el LLM (patrones conocidos
-      son más confiables).
-    - Los ítems del LLM se usan solo si las reglas no encontraron ninguno.
-    """
+    """Combina resultado LLM (base) con reglas (override para alta confianza)."""
     fields = result.data.get("fields", {})
 
     for key, value in llm_data.items():
-        if key == "items":
+        if key in ("items", "summary_breakdown") or key not in fields:
             continue
         if value is None or value == "":
             continue
@@ -1207,15 +1595,16 @@ def _merge_llm_primary(
         existing_val = existing.get("value")
         existing_conf = existing.get("confidence", 0)
 
-        # Si las reglas encontraron esto con alta confianza, mantener reglas
-        if existing_val is not None and existing_conf >= 0.8:
+        if existing_val is not None and (
+            existing_conf >= 0.98
+            or (existing.get("source") == "rules" and existing_conf >= 0.80)
+        ):
             continue
 
-        # Si las reglas no encontraron nada o la confianza es baja → usar LLM
         fields[key] = {
             "value": value,
             "source": "llm",
-            "confidence": 0.75,
+            "confidence": 0.85,
             "raw": value,
         }
 
@@ -1225,35 +1614,17 @@ def _merge_llm_primary(
     llm_items = llm_data.get("items", [])
     rule_items = [i for i in result.data.get("items", []) if _is_valid_item(i)]
     if llm_items and not rule_items:
-        # Solo usar items del LLM si las reglas no encontraron ninguno válido
-        parsed_items = []
-        for item in llm_items:
-            if not isinstance(item, dict):
-                continue
-            parsed_items.append({
-                "code": str(item.get("code", "") or ""),
-                "description": str(item.get("description", "") or ""),
-                "quantity": _parse_amount(str(item.get("quantity", 0))) if item.get("quantity") is not None else None,
-                "unit": str(item.get("unit", "") or ""),
-                "risk_un": str(item.get("risk_un", "") or ""),
-                "unit_price": _parse_amount(str(item.get("unit_price", 0))) if item.get("unit_price") is not None else None,
-                "import": _parse_amount(str(item.get("import", item.get("subtotal", 0)))) if (item.get("import") is not None or item.get("subtotal") is not None) else None,
-                "source": "llm",
-                "confidence": 0.70,
-            })
-        valid_llm_items = [it for it in parsed_items if _is_valid_item(it)]
-        if valid_llm_items:
-            result.data["items"] = valid_llm_items
+        parsed = _parse_llm_items(llm_items)
+        if parsed:
+            result.data["items"] = deduplicate_items(parsed)
 
     result.llm_model = llm_model
+    if llm_data.get("summary_breakdown"):
+        result.data["summary_breakdown"] = _build_summary_breakdown(fields, llm_data.get("summary_breakdown"))
 
 
 def _enrich_with_llm(result: ExtractionResult, text: str, llm_client=None, user=None) -> None:
-    """Usa el LLM para enriquecer/corregir campos que las reglas no encontraron.
-
-    Si no se pasa *llm_client* pero sí *user*, se crea un cliente desde los
-    settings del usuario.
-    """
+    """Usa el LLM para enriquecer/corregir campos que las reglas no encontraron."""
     try:
         from app.services.llm import extract_invoice_with_llm, get_client
         if llm_client is None:
@@ -1263,44 +1634,95 @@ def _enrich_with_llm(result: ExtractionResult, text: str, llm_client=None, user=
     if llm_client is None:
         return
 
-    llm_data = extract_invoice_with_llm(text, llm_client)
+    llm_data = extract_invoice_with_llm(text, client=llm_client, user=user)
     if not llm_data:
         return
 
     fields = result.data.get("fields", {})
     for key, value in llm_data.items():
-        if key == "items":
+        if key in ("items", "summary_breakdown") or key not in fields:
             continue
-        if key in fields and fields[key]["value"] is None and value is not None:
-            fields[key] = {
-                "value": value,
-                "source": "llm",
-                "confidence": 0.75,
-                "raw": value,
-            }
+        if value is None or value == "":
+            continue
+        existing = fields.get(key, {})
+        existing_val = existing.get("value") if isinstance(existing, dict) else None
+        existing_conf = existing.get("confidence", 0) if isinstance(existing, dict) else 0
+
+        if existing_val is not None and (
+            existing_conf >= 0.98
+            or (existing.get("source") == "rules" and existing_conf >= 0.80)
+        ):
+            continue
+
+        fields[key] = {
+            "value": value,
+            "source": "llm",
+            "confidence": 0.85,
+            "raw": value,
+        }
+
     result.data["fields"] = fields
 
-    # Manejar items del LLM si las reglas no tenían ningún item válido
     llm_items = llm_data.get("items", [])
     rule_items = [i for i in result.data.get("items", []) if _is_valid_item(i)]
     if llm_items and not rule_items:
-        parsed_items = []
-        for item in llm_items:
-            if not isinstance(item, dict):
-                continue
-            parsed_items.append({
-                "code": str(item.get("code", "") or ""),
-                "description": str(item.get("description", "") or ""),
-                "quantity": _parse_amount(str(item.get("quantity", 0))) if item.get("quantity") is not None else None,
-                "unit": str(item.get("unit", "") or ""),
-                "risk_un": str(item.get("risk_un", "") or ""),
-                "unit_price": _parse_amount(str(item.get("unit_price", 0))) if item.get("unit_price") is not None else None,
-                "import": _parse_amount(str(item.get("import", item.get("subtotal", 0)))) if (item.get("import") is not None or item.get("subtotal") is not None) else None,
-                "source": "llm",
-                "confidence": 0.70,
-            })
-        valid_llm_items = [it for it in parsed_items if _is_valid_item(it)]
-        if valid_llm_items:
-            result.data["items"] = valid_llm_items
+        parsed = _parse_llm_items(llm_items)
+        if parsed:
+            result.data["items"] = deduplicate_items(parsed)
 
     result.llm_model = getattr(llm_client, "model", None)
+    if llm_data.get("summary_breakdown"):
+        result.data["summary_breakdown"] = _build_summary_breakdown(fields, llm_data.get("summary_breakdown"))
+
+
+def _build_summary_breakdown(fields: dict, existing_breakdown: list | None = None) -> list[dict[str, Any]]:
+    """Construye o consolida la lista del cuadro resumen de impuestos y totales."""
+    if existing_breakdown and isinstance(existing_breakdown, list) and len(existing_breakdown) > 0:
+        cleaned = []
+        for item in existing_breakdown:
+            if isinstance(item, dict) and item.get("label"):
+                amt = item.get("amount")
+                if isinstance(amt, (int, float)):
+                    parsed_amt = amt
+                elif isinstance(amt, str) and amt.strip():
+                    parsed_amt = _parse_amount(amt)
+                else:
+                    parsed_amt = 0.0 if amt == 0 else amt
+                cleaned.append({
+                    "label": str(item.get("label")).strip(),
+                    "amount": parsed_amt
+                })
+        if cleaned:
+            return cleaned
+
+    # Lista prioritaria de campos para el resumen
+    _SUMMARY_MAP = [
+        ("subtotal", "Subtotal"),
+        ("net", "Neto Gravado"),
+        ("importe_neto", "Importe Neto"),
+        ("iva_amount", "IVA"),
+        ("iva_inscripto", "IVA Inscripto"),
+        ("iibb", "IIBB"),
+        ("ingresos_brutos", "Ingresos Brutos"),
+        ("tasas_municipales", "Tasas Municipales"),
+        ("sellos", "Sellos"),
+        ("percepcion_iva", "Percepción IVA"),
+        ("itc", "ITC"),
+        ("co2", "CO2"),
+        ("icl_amount", "ICL"),
+        ("idc_amount", "IDC"),
+        ("financiacion", "Financiación"),
+        ("tasa_vial", "Total Tasa Vial"),
+        ("total", "Total en Pesos"),
+    ]
+
+    breakdown = []
+    seen = set()
+    for key, label in _SUMMARY_MAP:
+        field = fields.get(key, {})
+        val = field.get("value") if isinstance(field, dict) else None
+        if val is not None and val != "" and label not in seen:
+            seen.add(label)
+            breakdown.append({"label": label, "amount": val})
+
+    return breakdown

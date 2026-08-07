@@ -66,7 +66,7 @@ def init_db() -> None:
 
     En producción debe usarse Alembic; esta función es un atajo de dev.
     """
-    # Importar todos los modelos para que SQLAlchemy los registre.
-    from app.models import document, user  # noqa: F401
+    # Importar todos los modelos para que SQLAlchemy los registre en metadata.
+    import app.models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)

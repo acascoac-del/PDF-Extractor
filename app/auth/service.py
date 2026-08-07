@@ -33,12 +33,15 @@ def _hash_api_token(raw: str) -> str:
 def register_user(db: Session, data: UserCreate) -> User:
     email = data.email.strip().lower()
     username = data.username.strip().lower()
-    existing = db.execute(
-        select(User).where((User.email == email) | (User.username == username))
-    ).scalar_one_or_none()
-    if existing:
-        if existing.email == email:
-            raise AuthError("Ya existe un usuario con ese email.", 409)
+    existing_users = list(
+        db.execute(
+            select(User).where((User.email == email) | (User.username == username))
+        ).scalars()
+    )
+    if existing_users:
+        for u in existing_users:
+            if u.email == email:
+                raise AuthError("Ya existe un usuario con ese email.", 409)
         raise AuthError("Ya existe un usuario con ese nombre de usuario.", 409)
     # El primer usuario es admin; los demás, user común.
     is_first = db.execute(select(User)).first() is None
@@ -60,12 +63,11 @@ def authenticate(db: Session, login: str, password: str) -> Optional[User]:
     """Acepta username o email."""
     login = login.strip().lower()
     stmt = select(User).where((User.username == login) | (User.email == login))
-    user = db.execute(stmt).scalar_one_or_none()
-    if user is None or not user.is_active:
-        return None
-    if not verify_password(password, user.hashed_password):
-        return None
-    return user
+    users = list(db.execute(stmt).scalars())
+    for user in users:
+        if user.is_active and verify_password(password, user.hashed_password):
+            return user
+    return None
 
 
 def login_user(db: Session, username: str, password: str) -> tuple[User, str]:

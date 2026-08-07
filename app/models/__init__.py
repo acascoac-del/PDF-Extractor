@@ -7,6 +7,7 @@ from app.models.api_token import ApiToken
 from app.models.document import Document
 from app.models.extraction import Extraction, FieldSource
 from app.models.correction import Correction
+from app.models.emitter_rule import EmitterRule
 
 __all__ = [
     "User",
@@ -16,4 +17,5 @@ __all__ = [
     "Extraction",
     "FieldSource",
     "Correction",
+    "EmitterRule",
 ]

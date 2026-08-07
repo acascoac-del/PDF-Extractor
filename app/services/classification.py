@@ -1,13 +1,19 @@
 """Clasificación y pipeline de extracción.
 
-Fase 5 lo completa con reglas + LLM.
-Por ahora: clasificación básica por keywords y pipeline que marca estado.
+Pipeline optimizado para Vercel (timeout 10s):
+  - Extracción rápida con PyMuPDF (primario).
+  - Tablas con pdfplumber (fallback, con timeout).
+  - OCR con OpenAI Vision (si Tesseract no disponible).
+  - Fallback graceful: si falla la extracción completa, devolver parcial.
 
 Adaptado para Vercel: acepta bytes directos (para R2) además de rutas de archivo.
 """
 from __future__ import annotations
 
+import logging
 import re
+import signal
+import platform
 from pathlib import Path
 
 from sqlalchemy.orm import Session
@@ -15,6 +21,8 @@ from sqlalchemy.orm import Session
 from app.models.document import DocStatus, DocType, Document
 from app.models.extraction import Extraction
 from app.services.pdf_text import extract_text
+
+logger = logging.getLogger(__name__)
 
 
 # Keywords para clasificación rápida (reglas)
@@ -78,19 +86,41 @@ def run_pipeline_sync(doc: Document, pdf_path_or_bytes: Path | str | bytes, db: 
 
     Acepta tanto una ruta de archivo como bytes directos del PDF.
     En Vercel se usa con bytes descargados de R2.
+
+    Manejo de timeouts:
+      - Si la extracción completa falla por timeout, intenta extracción parcial.
+      - Si todo falla, marca el documento como FAILED con mensaje descriptivo.
     """
+    import time
+    start_time = time.monotonic()
+
     doc.status = DocStatus.PROCESSING
     db.commit()
 
     # 1. Extraer texto (soporta bytes o ruta)
-    content = extract_text(pdf_path_or_bytes)
-    doc.page_count = content.page_count
-    doc.is_scanned = content.is_scanned
-    doc.needs_ocr = content.is_scanned
+    try:
+        content = extract_text(pdf_path_or_bytes)
+        doc.page_count = content.page_count
+        doc.is_scanned = content.is_scanned
+        doc.needs_ocr = content.is_scanned
+    except Exception as e:
+        logger.error("Text extraction failed: %s", e)
+        doc.status = DocStatus.FAILED
+        doc.error_message = f"Error al extraer texto del PDF: {e}"
+        db.commit()
+        return
+
+    elapsed = time.monotonic() - start_time
+    logger.info("Text extraction took %.1fs (%d pages, %d chars)", elapsed, content.page_count, content.char_count)
 
     # 2. Clasificar (si no tiene tipo seteado por el usuario)
     if doc.doc_type is None or doc.doc_type_source != "user":
-        classify_document(doc, content.full_text)
+        try:
+            classify_document(doc, content.full_text)
+        except Exception as e:
+            logger.warning("Classification failed, using generic: %s", e)
+            doc.doc_type = DocType.GENERIC
+            doc.doc_type_source = "fallback"
     db.commit()
 
     # 3. Extraer datos según tipo
@@ -100,23 +130,40 @@ def run_pipeline_sync(doc: Document, pdf_path_or_bytes: Path | str | bytes, db: 
 
     result: ExtractionResult | None = None
 
-    if doc.doc_type == DocType.INVOICE:
-        result = extract_invoice(content, user=user)
-    elif doc.doc_type == DocType.TABLE:
-        from app.services.extraction.table import extract_table
+    try:
+        if doc.doc_type == DocType.INVOICE:
+            result = extract_invoice(content, user=user)
+        elif doc.doc_type == DocType.TABLE:
+            from app.services.extraction.table import extract_table
+            result = extract_table(content)
+        elif doc.doc_type == DocType.CONTRACT:
+            from app.services.extraction.contract import extract_contract
+            result = extract_contract(content)
+        else:
+            from app.services.extraction.generic import extract_generic
+            result = extract_generic(content, user=user)
+    except Exception as e:
+        logger.error("Extraction failed: %s", e)
+        # Fallback: intentar extracción genérica (solo texto, sin LLM)
+        try:
+            from app.services.extraction.generic import extract_generic
+            result = extract_generic(content, user=None)
+            if result:
+                result.set_meta("fallback", True)
+                result.set_meta("fallback_reason", str(e))
+        except Exception as e2:
+            logger.error("Fallback extraction also failed: %s", e2)
+            result = None
 
-        result = extract_table(content)
-    elif doc.doc_type == DocType.CONTRACT:
-        from app.services.extraction.contract import extract_contract
+    elapsed = time.monotonic() - start_time
+    logger.info("Total pipeline took %.1fs", elapsed)
 
-        result = extract_contract(content)
-    else:
-        from app.services.extraction.generic import extract_generic
-
-        result = extract_generic(content)
-
-    # 4. Guardar extracción
+    # 4. Guardar extracción (eliminando previa si existía por re-procesamiento)
     if result:
+        if doc.extraction is not None:
+            db.delete(doc.extraction)
+            db.flush()
+
         extraction = Extraction(
             document_id=doc.id,
             doc_type=doc.doc_type.value,
@@ -127,9 +174,20 @@ def run_pipeline_sync(doc: Document, pdf_path_or_bytes: Path | str | bytes, db: 
         )
         db.add(extraction)
         doc.status = DocStatus.EXTRACTED
+
+        # Guardar regla aprendida automáticamente para este CUIT de emisor
+        try:
+            fields = result.data.get("fields", {})
+            cuit_val = fields.get("emitter_cuit", {}).get("value") or fields.get("cuit", {}).get("value")
+            emitter_name_val = fields.get("emitter_name", {}).get("value")
+            if cuit_val:
+                from app.services.rules_learning import save_learned_rule
+                save_learned_rule(db, str(cuit_val), str(emitter_name_val or ""), result.data, user_id=doc.user_id)
+        except Exception as e:
+            logger.warning("No se pudo guardar la regla aprendida: %s", e)
     else:
         doc.status = DocStatus.FAILED
-        doc.error_message = "No se pudo extraer contenido."
+        doc.error_message = "No se pudo extraer contenido del PDF."
 
     doc.processed_at = doc.updated_at
     db.commit()

@@ -6,6 +6,7 @@ Para tablas: una hoja por tabla con filas/columnas reales.
 from __future__ import annotations
 
 import io
+import json
 
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
@@ -88,7 +89,21 @@ def _field_row(ws, row: int, label: str, value, col_label: int = 1, col_value: i
 
 def _f(fields: dict, key: str):
     """Obtiene el valor de un campo extraído."""
-    return fields.get(key, {}).get("value")
+    field = fields.get(key, {})
+    if not isinstance(field, dict):
+        return _excel_cell_value(field)
+    return _excel_cell_value(field.get("value"))
+
+
+def _excel_cell_value(value):
+    """Convierte valores JSON anidados a valores aceptados por Excel."""
+    if isinstance(value, dict):
+        if "value" in value:
+            return _excel_cell_value(value["value"])
+        return json.dumps(value, ensure_ascii=False, default=str)
+    if isinstance(value, (list, tuple, set)):
+        return json.dumps(list(value), ensure_ascii=False, default=str)
+    return value
 
 
 # ── Factura ──────────────────────────────────────────────────────────────
@@ -139,17 +154,30 @@ def _write_invoice(wb: Workbook, ext: Extraction) -> None:
     ]:
         r = _field_row(ws, r, label, _f(fields, key))
 
-    # ── Totales ──
-    r = _section_row(ws, r, "TOTALES", 2)
+    # ── Totales y Desglose de Resumen ──
+    r = _section_row(ws, r, "TOTALES Y DESGLOSE DE IMPUESTOS", 2)
     for key, label in [
-        ("importe_neto", "Importe Neto"), ("financiacion", "Financiación"),
-        ("icl_amount", "ICL"), ("idc_amount", "IDC"),
-        ("iva_inscripto", "IVA Inscripto"), ("iva_no_inscripto", "IVA No Inscripto"),
-        ("iva_percepcion", "IVA Percepción"), ("iva_percentage", "% IVA"),
-        ("ingresos_brutos", "Importe Ing. Brutos"), ("tasa_vial", "Total Tasa Vial"),
-        ("net", "Neto Gravado"), ("iva_amount", "IVA"), ("total", "TOTAL"),
+        ("subtotal", "Subtotal"), ("net", "Neto Gravado"), ("importe_neto", "Importe Neto"),
+        ("iva_amount", "IVA"), ("iva_inscripto", "IVA Inscripto"), ("iva_no_inscripto", "IVA No Inscripto"),
+        ("iibb", "IIBB"), ("ingresos_brutos", "Ingresos Brutos"),
+        ("tasas_municipales", "Tasas Municipales"), ("sellos", "Impuesto de Sellos"),
+        ("percepcion_iva", "Percepción IVA"), ("iva_percepcion", "IVA Percepción"),
+        ("itc", "ITC (Combustibles)"), ("co2", "CO2 (Dióxido de Carbono)"),
+        ("financiacion", "Financiación"), ("icl_amount", "ICL"), ("idc_amount", "IDC"),
+        ("iva_percentage", "% IVA"), ("tasa_vial", "Total Tasa Vial"),
+        ("total", "TOTAL"),
     ]:
         r = _field_row(ws, r, label, _f(fields, key))
+
+    summary_breakdown = ext.data.get("summary_breakdown", [])
+    if summary_breakdown:
+        r = _section_row(ws, r, "RESUMEN DE IMPUESTOS Y TOTALES", 2)
+        _set_header(ws, r, ["Concepto / Impuesto", "Monto"])
+        r += 1
+        for entry in summary_breakdown:
+            ws.cell(row=r, column=1, value=entry.get("label", "")).border = _thin_border()
+            ws.cell(row=r, column=2, value=entry.get("amount", "")).border = _thin_border()
+            r += 1
 
     # ── IBP (Ingresos Brutos Provincial) ──
     if ibp:
@@ -252,20 +280,26 @@ def _write_invoice(wb: Workbook, ext: Extraction) -> None:
         "financiacion": "Financiación", "icl_amount": "ICL",
         "idc_amount": "IDC",
         "iva_inscripto": "IVA Inscripto", "iva_no_inscripto": "IVA No Insc.",
-        "iva_percepcion": "IVA Percepción", "iva_percentage": "% IVA",
-        "ingresos_brutos": "Ing. Brutos", "tasa_vial": "Tasa Vial",
+        "iibb": "IIBB", "ingresos_brutos": "Ing. Brutos",
+        "tasas_municipales": "Tasas Municipales", "sellos": "Sellos",
+        "percepcion_iva": "Percep. IVA", "iva_percepcion": "IVA Percepción",
+        "itc": "ITC", "co2": "CO2",
+        "iva_percentage": "% IVA", "tasa_vial": "Tasa Vial",
         "net": "Neto Gravado", "iva_amount": "IVA",
         "total": "TOTAL",
     }
 
     # Agregar todos los campos que tengan valor (ordenados por _LABELS primero, luego alfabético)
-    present_keys = [k for k in fields if fields[k].get("value") is not None and fields[k]["value"] != ""]
+    present_keys = [
+        k for k in fields
+        if isinstance(fields[k], dict)
+        and _excel_cell_value(fields[k].get("value")) not in (None, "")
+    ]
     ordered = [k for k in _LABELS if k in present_keys]
-    ordered += sorted(k for k in present_keys if k not in ordered)
     headers = [_LABELS.get(k, k) for k in ordered]
     _set_header(ws2, 1, headers)
     for col, key in enumerate(ordered, 1):
-        val = fields[key].get("value")
+        val = _excel_cell_value(fields[key].get("value"))
         ws2.cell(row=2, column=col, value=val).border = _thin_border()
     for i in range(1, len(headers) + 1):
         ws2.column_dimensions[get_column_letter(i)].width = 20
